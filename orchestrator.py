@@ -20,7 +20,7 @@ import ast
 import sys
 import asyncio
 import traceback
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from enum import Enum
@@ -36,6 +36,7 @@ if _ORCH_CONTRACTS_ROOT.exists():
         sys.path.insert(0, _contracts_path)
 
 from contracts.execution import DeveloperRunResult
+from blackboard import BlackboardState
 from pipeline import (
     StageContext,
     execute_development_stage,
@@ -274,6 +275,70 @@ class Orchestrator:
     - Progress tracking
     - Better error handling
     """
+
+    @property
+    def plan(self) -> List[str]:
+        return self.blackboard.plan
+
+    @plan.setter
+    def plan(self, value: List[str]) -> None:
+        self.blackboard.plan = value or []
+
+    @property
+    def sadt_plan(self) -> Optional[List[str]]:
+        return self.blackboard.sadt_plan
+
+    @sadt_plan.setter
+    def sadt_plan(self, value: Optional[List[str]]) -> None:
+        self.blackboard.sadt_plan = value
+
+    @property
+    def planner_source(self) -> Optional[str]:
+        return self.blackboard.planner_source
+
+    @planner_source.setter
+    def planner_source(self, value: Optional[str]) -> None:
+        self.blackboard.planner_source = value
+
+    @property
+    def files(self) -> Dict[str, Any]:
+        return self.blackboard.files
+
+    @files.setter
+    def files(self, value: Dict[str, Any]) -> None:
+        self.blackboard.files = value or {}
+
+    @property
+    def run_command(self) -> str:
+        return self.blackboard.run_command
+
+    @run_command.setter
+    def run_command(self, value: str) -> None:
+        self.blackboard.run_command = value or ""
+
+    @property
+    def technical_architecture(self) -> Optional[Dict]:
+        return self.blackboard.technical_architecture
+
+    @technical_architecture.setter
+    def technical_architecture(self, value: Optional[Dict]) -> None:
+        self.blackboard.technical_architecture = value
+
+    @property
+    def last_completed_task_index(self) -> int:
+        return self.blackboard.last_completed_task_index
+
+    @last_completed_task_index.setter
+    def last_completed_task_index(self, value: int) -> None:
+        self.blackboard.last_completed_task_index = int(value) if value is not None else -1
+
+    @property
+    def task_checkpoints(self) -> Dict[int, TaskCheckpoint]:
+        return self.blackboard.task_checkpoints
+
+    @task_checkpoints.setter
+    def task_checkpoints(self, value: Dict[int, TaskCheckpoint]) -> None:
+        self.blackboard.task_checkpoints = value or {}
     
     def __init__(
         self,
@@ -320,6 +385,7 @@ class Orchestrator:
         self.project_dir = self.workspace_dir
         self.repo = None
         self.run_tests_enabled = run_tests
+        self.blackboard = BlackboardState()
         
         # --- 3. STATE VARIABLES ---
         self.technical_architecture = None
