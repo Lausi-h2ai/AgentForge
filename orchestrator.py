@@ -21,7 +21,7 @@ import sys
 import asyncio
 import traceback
 from typing import Any, Dict, List, Optional
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -661,10 +661,10 @@ class Orchestrator:
 
     def _make_stage_context(
         self,
-        task: str,
-        checkpoint: TaskCheckpoint,
-        current_task_index: int,
-        savepoint: Optional[str],
+        task: Optional[str] = None,
+        checkpoint: Optional[TaskCheckpoint] = None,
+        current_task_index: Optional[int] = None,
+        savepoint: Optional[str] = None,
     ) -> StageContext:
         """Build a consistent stage context object for pipeline calls."""
         return StageContext(
@@ -1528,7 +1528,7 @@ class Orchestrator:
         clarified_prompt = self.user_prompt
         
         try:
-            clarified_prompt = execute_planning_stage(StageContext(self))
+            clarified_prompt = execute_planning_stage(self._make_stage_context())
 
             # Ensure execution agents are initialized with execution model
             if not self.dev_agent or not self.reviewer_agent:
@@ -1733,7 +1733,7 @@ class Orchestrator:
         finally:
             # --- Finalization Phase ---
             execute_finalization_stage(
-                StageContext(self),
+                self._make_stage_context(),
                 project_completed_successfully=project_completed_successfully,
                 clarified_prompt=clarified_prompt,
             )

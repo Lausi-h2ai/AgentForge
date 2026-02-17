@@ -6,8 +6,7 @@ import json
 import re
 import time
 import os
-import hashlib
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Tuple
 from enum import Enum
 
 # LlamaIndex imports
@@ -24,9 +23,6 @@ try:
     from google.genai.errors import ClientError
 except ImportError:
     ClientError = None
-
-from google.api_core import exceptions as google_exceptions
-
 
 class ErrorCategory(Enum):
     """Classification of errors for intelligent retry"""

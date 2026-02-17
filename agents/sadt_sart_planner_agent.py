@@ -11,7 +11,6 @@ Features:
 """
 
 from .base_agent import BaseAgent
-from .utils import parse_json_from_response
 import json
 import os
 import re
@@ -523,7 +522,6 @@ For SIMPLE projects: Create 2-3 flat tasks with no subtasks.
 Organize by feature/component area. No installation/execution tasks."""
 
         max_retries = 5
-        last_error = None
 
         for attempt in range(max_retries):
             if logger:

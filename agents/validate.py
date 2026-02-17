@@ -10,7 +10,6 @@ Checks that all Python files:
 
 import sys
 import ast
-import os
 from pathlib import Path
 
 
