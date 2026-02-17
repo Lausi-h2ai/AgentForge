@@ -35,8 +35,15 @@ if _ORCH_CONTRACTS_ROOT.exists():
     if _contracts_path not in sys.path:
         sys.path.insert(0, _contracts_path)
 
-from contracts.execution import DeveloperRunResult, ReviewRunResult
-from pipeline import StageContext, execute_development_stage, execute_planning_stage
+from contracts.execution import DeveloperRunResult
+from pipeline import (
+    StageContext,
+    execute_development_stage,
+    execute_finalization_stage,
+    execute_planning_stage,
+    execute_review_stage,
+    execute_testing_stage,
+)
 
 # Review timeout configuration (seconds)
 REVIEW_TIMEOUT_CONFIG = {
@@ -1525,243 +1532,33 @@ class Orchestrator:
                         continue
 
                     # --- Review Phase ---
-                    print(f"\n🔍 Reviewer checking code...")
-
-                    project_structure = self._get_project_structure_string()
-                    git_diff = self._get_project_diff()
-
-                    # Adjust reviewer timeout based on change complexity
-                    review_timeout = self._get_review_timeout(git_diff, checkpoint.files_modified)
-                    if self.reviewer_agent:
-                        self.reviewer_agent.review_timeout = review_timeout
-                    if self.logger:
-                        self.logger.log("INFO", f"Reviewer timeout set to {review_timeout}s")
-
-                    # 🆕 Update reviewer's conversation with developer
-                    reviewer_dev_conv = self.reviewer_agent._get_or_create_conversation("DeveloperAgent")
-                    if checkpoint.retry_count == 0:
-                        reviewer_dev_conv.add_message(
-                            "user",
-                            f"First review of: {task[:100]}...\nFiles: {', '.join(checkpoint.files_modified[:5])}"
+                    review_stage_result = await execute_review_stage(
+                        StageContext(
+                            self,
+                            task=task,
+                            checkpoint=checkpoint,
+                            current_task_index=current_task_index,
+                            savepoint=savepoint,
                         )
-                    else:
-                        reviewer_dev_conv.add_message(
-                            "user",
-                            f"Re-review (attempt {checkpoint.retry_count + 1}). Developer should have fixed previous issues."
-                        )
-
-                    # Execute review
-                    review_memory = self._get_memory_context(task, agent_name="CodeReviewerAgent")
-                    review_tool_memory = self._get_memory_context("tool usage rules", agent_name="CodeReviewerAgent")
-                    review_task = f"{task}\n\n{review_memory}{review_tool_memory}"
-                    raw_issues, raw_review_history = await self.reviewer_agent.review_code(
-                        review_task,
-                        project_structure,
-                        git_diff,
-                        checkpoint.review_feedback
                     )
-                    review_result = ReviewRunResult.from_legacy(raw_issues, raw_review_history)
-                    issues = review_result.issues
-                    review_history = review_result.history
+                    issue_summary = review_stage_result.issue_summary
+                    task = review_stage_result.updated_task
+                    if review_stage_result.should_retry:
+                        continue
 
-                    # 🆕 Store reviewer's findings in conversation
-                    if issues:
-                        issue_summary = f"Found {len(issues)} issues: " + \
-                                    "; ".join([f"{i.get('severity')}: {i.get('description', '')[:40]}" 
-                                                for i in issues[:3]])
-                        if len(issues) > 3:
-                            issue_summary += f" and {len(issues)-3} more..."
-                    else:
-                        issue_summary = "✅ No issues found - code looks good!"
-
-                    reviewer_dev_conv.add_message("assistant", issue_summary)
-
-                    # 🆕 Also add to developer's conversation so dev sees what reviewer said
-                    dev_reviewer_conv = self.dev_agent._get_or_create_conversation("CodeReviewerAgent")
-                    dev_reviewer_conv.add_message("assistant", issue_summary)
-
-                    # 🆕 Record interaction in checkpoint
-                    if checkpoint.retry_count > 0:  # Only track on retries
-                        checkpoint.add_agent_interaction(
-                            "DeveloperAgent",
-                            "CodeReviewerAgent", 
-                            f"Task attempt {checkpoint.retry_count + 1}",
-                            issue_summary
-                        )
-
-                    self.cost_tracker.calculate_and_print_cost(self.model_name)
-
-                    # Force retry if reviewer tool calls failed
-                    if self._detect_reviewer_tool_errors(review_history):
-                        issues = issues or []
-                        issues.append({
-                            "severity": "critical",
-                            "type": "integration_issue",
-                            "file": "N/A",
-                            "line": 0,
-                            "description": "Reviewer tool calls failed; review is invalid.",
-                            "suggestion": "Fix tool call format and re-run review."
-                        })
-
-                    # Enforce no-placeholder policy on modified files
-                    placeholder_issues = self._find_placeholders_in_files(checkpoint.files_modified)
-                    if placeholder_issues:
-                        if issues:
-                            issues.extend(placeholder_issues)
-                        else:
-                            issues = placeholder_issues
-                    # Validate reviewer findings to reduce false positives
-                    issues = self._validate_review_findings(issues, checkpoint.files_modified)
-
-
-                    checkpoint.review_feedback = issues
-                    checkpoint.status = TaskStatus.REVIEWED.value
-                    self._save_checkpoint(checkpoint)
-
-                    if issues and len(issues) > 0:
-                        # ✅ FIX: Check for blocking issues (critical OR major)
-                        blocking_issues = [
-                            i for i in issues 
-                            if i.get("severity") in ["critical", "major"]
-                        ]
-                        
-                        # Separate non-blocking issues (minor, suggestion)
-                        non_blocking_issues = [
-                            i for i in issues
-                            if i.get("severity") not in ["critical", "major"]
-                        ]
-                        
-                        if blocking_issues:
-                            # These MUST be fixed - retry with feedback
-                            print(f"❌ Review found {len(blocking_issues)} blocking issues:")
-                            for issue in blocking_issues:
-                                severity = issue.get('severity', 'unknown').upper()
-                                file = issue.get('file', 'unknown')
-                                line = issue.get('line', 0)
-                                desc = issue.get('description', 'No description')
-                                print(f"  - [{severity}] {file}:{line} - {desc}")
-                            
-                            # Rollback and retry
-                            if savepoint:
-                                print("⚠️ Rolling back changes...")
-                                self._rollback_to_savepoint(savepoint)
-                            
-                            # Build detailed feedback for developer
-                            issue_summary = "🔍 REVIEW FEEDBACK - Issues to fix:\n\n"
-                            for idx, issue in enumerate(blocking_issues, 1):
-                                issue_summary += f"{idx}. [{issue.get('severity', 'unknown').upper()}] "
-                                issue_summary += f"{issue.get('file', 'unknown')}:{issue.get('line', 0)}\n"
-                                issue_summary += f"   Problem: {issue.get('description', 'No description')}\n"
-                                if issue.get('suggestion'):
-                                    issue_summary += f"   Fix: {issue.get('suggestion')}\n"
-                                issue_summary += "\n"
-                            
-                            # Add feedback to developer's conversation for next attempt
-                            try:
-                                dev_reviewer_conv = self.dev_agent._get_or_create_conversation("CodeReviewerAgent")
-                                dev_reviewer_conv.add_message("assistant", issue_summary)
-                            except Exception as e:
-                                print(f"⚠️ Could not add review feedback to conversation: {e}")
-                            
-                            checkpoint.add_retry(
-                                "review_blocking_issues", 
-                                f"{len(blocking_issues)} blocking issues found"
-                            )
-                            self._remember_memory(
-                                content=f"Blocking review issues on task '{task}'. Issues: {issue_summary}",
-                                agent_name="CodeReviewerAgent",
-                                memory_type="event",
-                                tags=["retry", "review_blocking", f"project:{self.project_name}"],
-                                importance=0.8,
-                                store_global=True
-                            )
-                            checkpoint.status = TaskStatus.PENDING.value
-                            self._save_checkpoint(checkpoint)
-                            
-                            print("\n🔄 Retrying task with reviewer feedback...")
-                            continue  # Retry this task
-                        
-                        elif non_blocking_issues:
-                            # Minor/suggestion issues - log but proceed
-                            print(f"⚠️ Review found {len(non_blocking_issues)} non-blocking issues:")
-                            for issue in non_blocking_issues:
-                                severity = issue.get('severity', 'unknown')
-                                file = issue.get('file', 'unknown')
-                                desc = issue.get('description', 'No description')
-                                print(f"  - [{severity}] {file} - {desc}")
-                            print("   (Proceeding as issues are non-blocking)")
-                    else:
-                        print("✅ Review passed - no issues found")
-
-                    # Check for retry loop
-                    if checkpoint.retry_count >= 3:
-                        recent_errors = [r['error_type'] for r in checkpoint.retry_history[-3:]]
-                        
-                        # Same error 3x = stuck in loop
-                        if len(set(recent_errors)) == 1:
-                            print(f"⚠️ STUCK: Same error 3x - {recent_errors[0]}")
-                            
-                            # Get specific issues
-                            if checkpoint.review_feedback:
-                                issues_text = "\n".join([
-                                    f"FIX THIS: {i['file']}:{i['line']} - {i['description']}"
-                                    for i in checkpoint.review_feedback
-                                ])
-                                
-                                # Add explicit fix instructions to task
-                                task = f"""{task}
-
-                    🔴 CRITICAL - PREVIOUS {checkpoint.retry_count} ATTEMPTS FAILED:
-
-                    {issues_text}
-
-                    YOU MUST FIX THESE EXACT ISSUES LISTED ABOVE.
-                    Read the error messages carefully and fix each one.
-                    """
-                    
                     # --- Testing Phase (if enabled) ---
-                    if self.tester_agent and self.run_tests_enabled:
-                        print(f"\n🧪 Running tests...")
-                        
-                        try:
-                            test_success, test_output = self.tester_agent.run_quality_gate(
-                                self.technical_architecture,
-                                self.logger
-                            )
-                            self.cost_tracker.calculate_and_print_cost(self.model_name)
-                            
-                            checkpoint.test_results = test_output
-                            
-                            if not test_success:
-                                print(f"❌ Tests failed:")
-                                print(test_output)
-                                
-                                # Rollback and retry
-                                if savepoint:
-                                    print("⚠️ Rolling back changes...")
-                                    self._rollback_to_savepoint(savepoint)
-                                
-                                checkpoint.add_retry("test_failure", test_output[:500])
-                                self._remember_memory(
-                                    content=f"Tests failed for task '{task}'. Output: {test_output[:400]}",
-                                    agent_name="TesterAgent",
-                                    memory_type="event",
-                                    tags=["retry", "test_failure", f"project:{self.project_name}"],
-                                    importance=0.7,
-                                    store_global=False
-                                )
-                                checkpoint.status = TaskStatus.PENDING.value
-                                self._save_checkpoint(checkpoint)
-                                continue
-                            
-                            checkpoint.status = TaskStatus.TESTED.value
-                            self._save_checkpoint(checkpoint)
-                            print("✅ Tests passed")
-                        
-                        except Exception as e:
-                            self.logger.log("WARNING", f"Testing failed: {e}")
-                            print(f"⚠️ Testing encountered error: {e}, proceeding anyway...")
-                    
+                    testing_stage_result = execute_testing_stage(
+                        StageContext(
+                            self,
+                            task=task,
+                            checkpoint=checkpoint,
+                            current_task_index=current_task_index,
+                            savepoint=savepoint,
+                        )
+                    )
+                    if testing_stage_result.should_retry:
+                        continue
+
                     # --- Task Completed Successfully ---
                     checkpoint.status = TaskStatus.COMPLETED.value
                     checkpoint.timestamp = datetime.now().isoformat()
@@ -1865,87 +1662,12 @@ class Orchestrator:
         
         finally:
             # --- Finalization Phase ---
-            self.logger.log_phase("Finalization")
-            print("\n=== 🏁 Finalization ===")
-            
-            if project_completed_successfully:
-                # Generate documentation
-                print("\n📚 Generating documentation...")
-                try:
-                    project_structure = self._get_project_structure_string()
-                    requirements_txt = clarified_prompt if 'clarified_prompt' in locals() else self.user_prompt
-                    
-                    readme_content = self.doc_agent.write_documentation(
-                        self.project_name,
-                        project_structure,
-                        self.run_command,
-                        requirements_txt,
-                        self.logger
-                    )
-                    
-                    # Save README
-                    readme_path = os.path.join(self.project_dir, "README.md")
-                    with open(readme_path, 'w', encoding='utf-8') as f:
-                        f.write(readme_content)
-                    self.files["README.md"] = readme_content
-                    
-                    print("✅ Documentation generated")
-                    
-                except Exception as e:
-                    print(f"❌ Documentation generation failed: {e}")
-            
-            # Print summary
-            print("\n" + "="*60)
-            print("PROJECT SUMMARY")
-            print("="*60)
-            print(f"Project: {self.project_name}")
-            completed_count = sum(
-                1 for cp in self.task_checkpoints.values()
-                if cp.status == TaskStatus.COMPLETED.value
+            execute_finalization_stage(
+                StageContext(self),
+                project_completed_successfully=project_completed_successfully,
+                clarified_prompt=clarified_prompt,
             )
-            print(f"Tasks completed: {completed_count}/{len(self.plan)}")
-            print(f"Status: {'✅ SUCCESS' if project_completed_successfully else '❌ INCOMPLETE'}")
 
-            # 🆕 Print agent statistics
-            print(f"\n📊 AGENT STATISTICS:")
-            agents = [
-                ("Developer", self.dev_agent),
-                ("Code Reviewer", self.reviewer_agent),
-                ("Architect", self.architect_agent),
-                ("Requirements", self.requirements_agent),
-            ]
-
-            for agent_name, agent in agents:
-                if agent:  # Some agents might be None
-                    stats = agent.get_stats()
-                    print(f"\n  {agent_name}:")
-                    print(f"    Total Calls: {stats['call_count']}")
-                    print(f"    Errors: {stats['error_count']} ({stats['error_rate']:.1%})")
-                    print(f"    Conversations: {stats['active_conversations']}")
-
-            # 🆕 Print retry statistics from checkpoints
-            total_retries = sum(cp.retry_count for cp in self.task_checkpoints.values())
-            tasks_with_retries = sum(1 for cp in self.task_checkpoints.values() if cp.retry_count > 0)
-            if tasks_with_retries > 0:
-                print(f"\n  Retry Statistics:")
-                print(f"    Total Retries: {total_retries}")
-                print(f"    Tasks with Retries: {tasks_with_retries}/{len(self.task_checkpoints)}")
-                print(f"    Average Retries: {total_retries/len(self.task_checkpoints):.1f}")
-
-            # Print cost summary
-            cost_summary = self.cost_tracker.get_summary()
-            print(f"\n{cost_summary}")
-
-            # Print metrics summary
-            metrics_summary = self.metrics_tracker.get_summary()
-            print(f"\n{metrics_summary}")
-
-            # Write logs
-            self.logger.log_final_summary(cost_summary, metrics_summary)
-            self.logger.write_to_file()
-
-            print("="*60)
-    
     def _create_simple_plan(self, architecture: Dict) -> List[str]:
         """
         Create a simple task plan from architecture.
