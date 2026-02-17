@@ -36,7 +36,7 @@ if _ORCH_CONTRACTS_ROOT.exists():
         sys.path.insert(0, _contracts_path)
 
 from contracts.execution import DeveloperRunResult, ReviewRunResult
-from pipeline import StageContext, execute_planning_stage
+from pipeline import StageContext, execute_development_stage, execute_planning_stage
 
 # Review timeout configuration (seconds)
 REVIEW_TIMEOUT_CONFIG = {
@@ -1512,106 +1512,18 @@ class Orchestrator:
                 
                 try:
                     # --- Development Phase ---
-                    checkpoint.status = TaskStatus.IN_PROGRESS.value
-                    self._save_checkpoint(checkpoint)
-
-                    print(f"\n🔧 Developer working on task...")
-
-                    # Get RAG context
-                    rag_context = self._get_rag_context(task)
-
-                    # 🆕 Build retry context from conversation history
-                    retry_context = self._build_retry_context_from_conversations(checkpoint, task)
-
-                    # Show conversation stats if retrying
-                    if checkpoint.retry_count > 0:
-                        dev_reviewer_conv = self.dev_agent._get_or_create_conversation("CodeReviewerAgent")
-                        if dev_reviewer_conv.history:
-                            print(f"💬 Loading conversation history: {len(dev_reviewer_conv.history)} messages")
-
-                    # Combine all context
-                    dev_memory = self._get_memory_context(task, agent_name="DeveloperAgent")
-                    dev_tool_memory = self._get_memory_context("tool usage rules", agent_name="DeveloperAgent")
-                    enhanced_task = f"{task}\n\n{rag_context}{retry_context}{dev_memory}{dev_tool_memory}"
-
-                    # 🆕 Record task start in conversation
-                    orchestrator_conv = self.dev_agent._get_or_create_conversation("orchestrator")
-                    orchestrator_conv.add_message(
-                        "system",
-                        f"Starting task {current_task_index + 1}: {task[:100]}..."
-                    )
-
-                    # Execute development
-                    dev_result = await self._run_developer_agent(enhanced_task)
-                    success = dev_result.success
-                    dev_output = dev_result.output
-                    tool_calls = [tc.to_legacy() for tc in dev_result.tool_calls]
-
-                    # 🆕 Record completion in conversation
-                    orchestrator_conv.add_message(
-                        "assistant",
-                        f"Completed with {len(tool_calls)} tool calls. Files modified: {[tc.get('tool_args', {}).get('filename', '?') for tc in tool_calls if tc.get('tool_name') in ['write_file', 'replace_text']]}"
-                    )
-
-                    # File verification
-                    expected_files = self.extract_filenames_from_task(task)
-                    if len(tool_calls) == 0:
-                        print("❌ DEVELOPMENT FAILED: No tool calls were executed.")
-                        checkpoint.add_retry("no_tool_calls", "Developer returned completion without using tools")
-                        self._remember_memory(
-                            content=f"Developer used zero tools for task '{task}'. Force retry.",
-                            agent_name="DeveloperAgent",
-                            memory_type="event",
-                            tags=["retry", "no_tool_calls", f"project:{self.project_name}"],
-                            importance=0.9,
-                            store_global=True
+                    dev_stage_result = await execute_development_stage(
+                        StageContext(
+                            self,
+                            task=task,
+                            checkpoint=checkpoint,
+                            current_task_index=current_task_index,
+                            savepoint=savepoint,
                         )
-                        checkpoint.status = TaskStatus.PENDING.value
-                        self._save_checkpoint(checkpoint)
+                    )
+                    if dev_stage_result.should_retry:
                         continue
-                    if self.enable_file_verification and expected_files:
-                        self._get_available_files()
-                        missing = [f for f in expected_files if f not in self.files]
-                        
-                        if missing:
-                            print(f"❌ VERIFICATION FAILED")
-                            print(f"❌ Task claims complete but these files missing: {missing}")
-                            
-                            # 🆕 Record failure in conversation
-                            dev_reviewer_conv = self.dev_agent._get_or_create_conversation("CodeReviewerAgent")
-                            dev_reviewer_conv.add_message(
-                                "system",
-                                f"❌ File verification failed. Missing: {', '.join(missing)}"
-                            )
-                            
-                            # Force retry
-                            checkpoint.add_retry("files_not_created", f"{len(missing)} files missing")
-                            self._remember_memory(
-                                content=f"Retry needed: files not created for task '{task}'. Missing: {', '.join(missing)}",
-                                agent_name="DeveloperAgent",
-                                memory_type="event",
-                                tags=["retry", "files_not_created", f"project:{self.project_name}"],
-                                importance=0.8,
-                                store_global=True
-                            )
-                            checkpoint.status = TaskStatus.PENDING.value
-                            self._save_checkpoint(checkpoint)
-                            continue
 
-                    self.cost_tracker.calculate_and_print_cost(self.model_name)
-                    
-                    if not success:
-                        raise Exception("Development failed")
-                    
-                    checkpoint.development_output = dev_output
-                    checkpoint.status = TaskStatus.DEVELOPED.value
-                    checkpoint.files_modified = [tc["tool_args"].get("filename", "") 
-                                                for tc in tool_calls 
-                                                if tc["tool_name"] in ["write_file", "replace_text", "insert_text"]]
-                    self._save_checkpoint(checkpoint)
-                    
-                    print("✅ Development complete")
-                    
                     # --- Review Phase ---
                     print(f"\n🔍 Reviewer checking code...")
 
