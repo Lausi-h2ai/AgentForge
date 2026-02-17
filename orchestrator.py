@@ -592,6 +592,22 @@ class Orchestrator:
         if len(text) <= max_len:
             return text
         return text[:max_len] + "..."
+
+    def _make_stage_context(
+        self,
+        task: str,
+        checkpoint: TaskCheckpoint,
+        current_task_index: int,
+        savepoint: Optional[str],
+    ) -> StageContext:
+        """Build a consistent stage context object for pipeline calls."""
+        return StageContext(
+            self,
+            task=task,
+            checkpoint=checkpoint,
+            current_task_index=current_task_index,
+            savepoint=savepoint,
+        )
         
 
     async def _run_developer_agent(self, task_description) -> DeveloperRunResult:
@@ -1518,44 +1534,32 @@ class Orchestrator:
                     self._save_checkpoint(checkpoint)
                 
                 try:
-                    # --- Development Phase ---
-                    dev_stage_result = await execute_development_stage(
-                        StageContext(
-                            self,
-                            task=task,
-                            checkpoint=checkpoint,
-                            current_task_index=current_task_index,
-                            savepoint=savepoint,
-                        )
+                    stage_ctx = self._make_stage_context(
+                        task=task,
+                        checkpoint=checkpoint,
+                        current_task_index=current_task_index,
+                        savepoint=savepoint,
                     )
+                    # --- Development Phase ---
+                    dev_stage_result = await execute_development_stage(stage_ctx)
                     if dev_stage_result.should_retry:
                         continue
 
                     # --- Review Phase ---
-                    review_stage_result = await execute_review_stage(
-                        StageContext(
-                            self,
-                            task=task,
-                            checkpoint=checkpoint,
-                            current_task_index=current_task_index,
-                            savepoint=savepoint,
-                        )
-                    )
+                    review_stage_result = await execute_review_stage(stage_ctx)
                     issue_summary = review_stage_result.issue_summary
                     task = review_stage_result.updated_task
                     if review_stage_result.should_retry:
                         continue
 
                     # --- Testing Phase (if enabled) ---
-                    testing_stage_result = execute_testing_stage(
-                        StageContext(
-                            self,
-                            task=task,
-                            checkpoint=checkpoint,
-                            current_task_index=current_task_index,
-                            savepoint=savepoint,
-                        )
+                    stage_ctx = self._make_stage_context(
+                        task=task,
+                        checkpoint=checkpoint,
+                        current_task_index=current_task_index,
+                        savepoint=savepoint,
                     )
+                    testing_stage_result = execute_testing_stage(stage_ctx)
                     if testing_stage_result.should_retry:
                         continue
 
