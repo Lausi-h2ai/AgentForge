@@ -11,3 +11,6 @@ Execution quality rules:
 Anti-loop rules:
 - Never emit repeated identical Action/Action Input blocks.
 - After 2 failed attempts with same tool, switch strategy (inspect files, narrower edit, or different tool).
+
+Example:
+If `replace_text` fails twice due to mismatch, call `read_file` to refresh exact snippet, then retry with a narrower replacement.

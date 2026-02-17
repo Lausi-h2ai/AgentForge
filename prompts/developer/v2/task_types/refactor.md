@@ -8,3 +8,7 @@ Focus:
 Done criteria:
 - Behavior preserved.
 - Duplication/complexity reduced in changed scope.
+
+
+Example:
+Extract duplicated parsing logic into `parse_item()` while preserving public function signatures.

@@ -18,3 +18,7 @@ Issue quality rules:
 - Prioritize: critical > major > minor > suggestion.
 - Prefer concrete issues over generic statements.
 - If no issues: submit `issues: []` with confidence.
+
+
+Example:
+If no issues found after quick checks, still call `submit_review` once with empty issues and confidence score.

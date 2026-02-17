@@ -4,3 +4,7 @@ Ensure enterprise-grade clarity:
 - Separate phases/components clearly.
 - Explicitly define integration boundaries and data contracts.
 - Include operational constraints (local dependencies, observability, failure handling).
+
+
+Example:
+"Build OCR + LLM platform" -> define subsystem boundaries and operational constraints explicitly.

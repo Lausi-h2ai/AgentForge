@@ -9,3 +9,8 @@ Reliability rules:
 Quality rules:
 - Tasks must be concrete, verifiable, and implementation-ready.
 - Cover critical integration points and error handling.
+
+
+Example:
+Input context: "Build a FastAPI TODO API"
+Output tasks include concrete file changes like `app/main.py`, `app/models.py`, `app/routes/todos.py` and avoid install/run tasks.

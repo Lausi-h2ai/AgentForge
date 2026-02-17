@@ -8,3 +8,7 @@ Focus:
 Done criteria:
 - Fix addresses described failure path.
 - Edge case handling is explicit where relevant.
+
+
+Example:
+Bug: null `routes` causes crash. Fix initialization path and add guard for empty input.

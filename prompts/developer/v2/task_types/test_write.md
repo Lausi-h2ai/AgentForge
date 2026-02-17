@@ -8,3 +8,7 @@ Focus:
 Done criteria:
 - Tests target explicit behavior from task.
 - Assertions are specific and meaningful.
+
+
+Example:
+Add deterministic test: given invalid token, API returns 401 with stable error payload.

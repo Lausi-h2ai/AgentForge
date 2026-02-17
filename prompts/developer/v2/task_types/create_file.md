@@ -8,3 +8,7 @@ Focus:
 Done criteria:
 - File exists at exact requested path.
 - Content is runnable/usable, not placeholder text.
+
+
+Example:
+Task asks for `api/client.js` -> ensure directory exists, then write full file content in one `write_file` call.

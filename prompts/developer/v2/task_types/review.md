@@ -7,3 +7,7 @@ Focus:
 
 Done criteria:
 - Findings are actionable and severity-ranked.
+
+
+Example:
+Report one critical regression in `api/auth.py` and one minor style issue with file/line references.

@@ -13,3 +13,9 @@ Completion rules:
 - Mark complete only after required file changes are made.
 - Keep changes minimal and task-scoped.
 - Never leave placeholders, TODOs, or stubs.
+
+
+Example:
+Task: "Create utils/math.py with add(a,b)"
+Action: write_file
+Action Input: {"filename":"utils/math.py","content":"def add(a, b):\n    return a + b\n"}
