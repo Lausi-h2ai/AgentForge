@@ -1,0 +1,2245 @@
+"""
+Improved Orchestrator for Multi-Agent Software Development System
+
+Key Improvements:
+- Unified state management with atomic writes
+- Git-based rollback on task failure  
+- Better error handling and retry logic
+- Conversation history between agents
+- Progress tracking and visualization
+- Per-agent token usage tracking
+- Enhanced logging with call stacks
+- Architecture validation
+"""
+
+import re
+import os
+import git
+import json
+import ast
+import sys
+import asyncio
+import traceback
+from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass, field, asdict
+from datetime import datetime
+from enum import Enum
+from pathlib import Path
+from skill_manager import SkillManager
+from memory import MemoryManager
+
+# Review timeout configuration (seconds)
+REVIEW_TIMEOUT_CONFIG = {
+    "simple": 60,
+    "medium": 120,
+    "complex": 180,
+}
+
+# LlamaIndex imports
+from llama_index.core import VectorStoreIndex, Document
+
+# Load environment variables
+from dotenv import load_dotenv
+load_dotenv()
+
+# Import refactored agents
+from agents import (
+    DeveloperAgent,
+    CodeReviewerAgent,
+    ProductOwnerAgent,
+    RequirementsAnalystAgent,
+    SoftwareArchitectAgent,
+    DocumentationAgent,
+    UnitTestAgent,
+    TesterAgent,
+    configure_llm_and_embed,
+    get_phase_model_overrides
+)
+
+# Import supporting modules (assumed to exist):
+from orchestrator_tools import OrchestratorTools
+
+
+try:
+    from structured_logger import StructuredLogger
+except ImportError:
+    print("⚠️ structured_logger not found, using simple logger")
+    class StructuredLogger:
+        def log(self, level, msg): print(f"[{level}] {msg}")
+        def log_phase(self, phase): print(f"\n=== {phase} ===")
+        def log_task(self, current, total, desc): print(f"Task {current}/{total}: {desc}")
+        def start_step(self, a, b): pass
+        def log_event_in_step(self, event, data): pass
+        def log_final_summary(self, a, b): pass
+        def write_to_file(self): pass
+
+try:
+    from metrics_tracker import MetricsTracker
+except ImportError:
+    print("⚠️ metrics_tracker not found, using simple tracker")
+    class MetricsTracker:
+        def complete_task(self, task, **kwargs): pass
+        def get_summary(self): return "No metrics available"
+        def to_dict(self): return {}
+
+try:
+    from CostTracker import CostTracker
+except ImportError:
+    print("⚠️ CostTracker not found, using simple tracker")
+    class CostTracker:
+        def __init__(self, tc): self.tc = tc
+        def calculate_and_print_cost(self, model): pass
+        def get_summary(self): return "No cost data available"
+        def to_dict(self): return {}
+
+try:
+    from config import debug
+except ImportError:
+    debug = False
+
+
+class TaskStatus(Enum):
+    """Enhanced task execution status"""
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    DEVELOPED = "developed"
+    REVIEWED = "reviewed"
+    TESTED = "tested"
+    ARCHITECTURE_VALIDATED = "architecture_validated"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    BLOCKED = "blocked"
+    SKIPPED = "skipped"
+
+
+@dataclass
+class TaskCheckpoint:
+    """Enhanced checkpoint with more metadata"""
+    task_index: int
+    task_description: str
+    status: str
+    timestamp: str
+    
+    # Execution details
+    development_output: Optional[str] = None
+    review_feedback: Optional[List[Dict]] = None
+    test_results: Optional[str] = None
+    architecture_validation: Optional[Dict] = None
+    
+    # Retry tracking
+    retry_count: int = 0
+    retry_history: List[Dict] = field(default_factory=list)
+    
+    # File tracking
+    files_modified: List[str] = field(default_factory=list)
+    files_created: List[str] = field(default_factory=list)
+    files_deleted: List[str] = field(default_factory=list)
+    
+    # Dependencies
+    depends_on: List[int] = field(default_factory=list)
+    blocked_by: List[int] = field(default_factory=list)
+    
+    # Git tracking
+    git_commit_sha: Optional[str] = None
+    git_stash_ref: Optional[str] = None  # NEW: For rollback
+    
+    # Agent interactions
+    agent_interactions: List[Dict] = field(default_factory=list)
+    
+    def add_retry(self, error_type: str, error_message: str):
+        """Record a retry attempt"""
+        self.retry_count += 1
+        self.retry_history.append({
+            "attempt": self.retry_count,
+            "error_type": error_type,
+            "error_message": error_message[:500],  # Truncate long errors
+            "timestamp": datetime.now().isoformat()
+        })
+    
+    def add_agent_interaction(self, from_agent: str, to_agent: str, message: str, response: str):
+        """Record an agent interaction"""
+        self.agent_interactions.append({
+            "from": from_agent,
+            "to": to_agent,
+            "message": message[:200],
+            "response": response[:200],
+            "timestamp": datetime.now().isoformat()
+        })
+
+
+class ProgressTracker:
+    """Track and display progress of multi-agent work"""
+    
+    def __init__(self, total_tasks: int):
+        self.total_tasks = total_tasks
+        self.completed_tasks = 0
+        self.processed_tasks = 0
+        self.current_task = None
+        self.start_time = datetime.now()
+        self.task_start_time = None
+        self.task_times = []
+    
+    def start_task(self, task_index: int, task_description: str):
+        """Mark task as started"""
+        self.current_task = {
+            "index": task_index,
+            "description": task_description,
+            "start_time": datetime.now()
+        }
+        self.task_start_time = datetime.now()
+        self._print_progress()
+    
+    def complete_task(self, success: bool = True):
+        """Mark current task as completed"""
+        if not self.current_task:
+            return
+        
+        elapsed = (datetime.now() - self.task_start_time).total_seconds()
+        self.task_times.append(elapsed)
+        self.processed_tasks += 1
+
+        if success:
+            self.completed_tasks += 1
+        
+        self.current_task = None
+        self._print_progress()
+    
+    def _print_progress(self):
+        """Print current progress"""
+        progress_pct = (self.processed_tasks / self.total_tasks) * 100 if self.total_tasks > 0 else 0
+        
+        # Create progress bar
+        bar_width = 40
+        filled = int(bar_width * progress_pct / 100)
+        bar = "█" * filled + "░" * (bar_width - filled)
+        
+        # Calculate ETA
+        eta_str = self._calculate_eta()
+        
+        # Print
+        print(f"\n{'='*60}")
+        print(f"Progress: [{bar}] {progress_pct:.1f}%")
+        print(f"Tasks: completed={self.completed_tasks}/{self.total_tasks}, processed={self.processed_tasks}/{self.total_tasks}")
+        
+        if self.current_task:
+            task_elapsed = (datetime.now() - self.task_start_time).total_seconds()
+            print(f"Current: Task {self.current_task['index'] + 1} ({task_elapsed:.1f}s elapsed)")
+            print(f"  {self.current_task['description'][:50]}...")
+        
+        print(f"ETA: {eta_str}")
+        print(f"{'='*60}\n")
+    
+    def _calculate_eta(self) -> str:
+        """Calculate estimated time remaining"""
+        if not self.task_times or self.processed_tasks == 0:
+            return "Calculating..."
+        
+        avg_time_per_task = sum(self.task_times) / len(self.task_times)
+        remaining_tasks = self.total_tasks - self.processed_tasks
+        
+        eta_seconds = avg_time_per_task * remaining_tasks
+        
+        if eta_seconds < 60:
+            return f"{int(eta_seconds)}s"
+        elif eta_seconds < 3600:
+            return f"{int(eta_seconds / 60)}m {int(eta_seconds % 60)}s"
+        else:
+            hours = int(eta_seconds / 3600)
+            minutes = int((eta_seconds % 3600) / 60)
+            return f"{hours}h {minutes}m"
+
+
+class Orchestrator:
+    """
+    Enhanced orchestrator with:
+    - Unified state management
+    - Git-based rollback
+    - Progress tracking
+    - Better error handling
+    """
+    
+    def __init__(
+        self,
+        project_name,
+        initial_prompt_file=None,
+        provider="ollama",
+        force_new=False,
+        run_tests=False,
+        planning_model: Optional[str] = None,
+        execution_model: Optional[str] = None,
+    ):
+        """
+        Initialize orchestrator.
+        
+        Args:
+            project_name: Name of the project
+            initial_prompt_file: Path to initial prompt file
+            provider: LLM provider ("ollama" or "google")
+            force_new: Force new project (ignore existing state)
+            run_tests: Enable testing phase
+        """
+        
+        # --- 1. CORE SETUP ---
+        self.logger = StructuredLogger()
+        self.provider = provider
+        env_planning_model, env_execution_model = get_phase_model_overrides(provider)
+        self.planning_model = planning_model or env_planning_model
+        self.execution_model = execution_model or env_execution_model or self.planning_model
+
+        llm_class, llm_args, token_counter = self._configure_llm(self.planning_model)
+        self._llm_class = llm_class
+        self._llm_args = llm_args
+        
+        self.metrics_tracker = MetricsTracker()
+        
+        # --- 2. PROJECT PATHS ---
+        self.project_name = project_name
+        self.project_path = os.path.join(".", "projects", project_name)
+        self.requirements_file = os.path.join(self.project_path, "requirements.md")
+        self.workspace_dir = os.path.join(self.project_path, "workspace")
+        self.state_file = os.path.join(self.project_path, "state.json")
+        self.checkpoint_file = os.path.join(self.project_path, "checkpoints.json")
+        
+        self.project_dir = self.workspace_dir
+        self.repo = None
+        self.run_tests_enabled = run_tests
+        
+        # --- 3. STATE VARIABLES ---
+        self.technical_architecture = None
+        self.plan = []
+        self.sadt_plan = None
+        self.planner_source = None
+        self.files = {}  # Dictionary { 'filename': 'content' }
+        self.run_command = ""
+        self.last_completed_task_index = -1
+        self.code_index = None
+        
+        # NEW: Enhanced tracking
+        self.task_checkpoints: Dict[int, TaskCheckpoint] = {}
+        self.max_retry_attempts = 10
+        self.architecture_violations: List[Dict] = []
+        self.progress_tracker = None  # Initialized when plan is ready
+        self.is_resuming = False
+        
+        # --- 4. LOAD PROMPT ---
+        if os.path.exists(self.requirements_file) and not force_new:
+            with open(self.requirements_file, 'r', encoding='utf-8') as f:
+                self.user_prompt = f.read()
+        elif initial_prompt_file:
+            with open(initial_prompt_file, 'r', encoding='utf-8') as f:
+                self.user_prompt = f.read()
+        else:
+            raise ValueError("No requirements file found and no initial prompt file provided.")
+        
+        # --- 5. STATE MANAGEMENT ---
+        if os.path.exists(self.state_file) and not force_new:
+            self.logger.log("INFO", "Resuming existing project...")
+            self._load_state()
+            self._load_checkpoints()
+            self.repo = git.Repo(self.project_dir)
+            self._build_index_from_disk()
+            self.is_resuming = True
+        else:
+            self.logger.log("INFO", "Starting a new project...")
+            self._clean_workspace()
+            self.is_resuming = False
+        
+        # --- 6. AGENT INITIALIZATION ---
+        # Create tools (pass self for access to files)
+        if OrchestratorTools:
+            tools = OrchestratorTools(self)
+        else:
+            # Minimal tools implementation if import failed
+            tools = self._create_minimal_tools()
+        
+        #Initialize skill manager
+        self.skill_manager = SkillManager(skills_directory="./skills",cache_dir="./skill_cache")
+
+        self.tools = tools
+
+        # Initialize memory manager (local-only defaults)
+        self.memory = MemoryManager(
+            enabled=os.getenv("HIPPOCAMP_AI_ENABLED", "true").lower() == "true",
+            qdrant_url=os.getenv("QDRANT_URL", "http://localhost:6333"),
+            llm_provider=os.getenv("HIPPOCAMP_AI_LLM_PROVIDER", "ollama"),
+            llm_model=os.getenv("HIPPOCAMP_AI_LLM_MODEL"),
+            logger=self.logger,
+            enable_global_memory=True
+        )
+
+        # Initialize planning agents with planning model
+        self.po_agent = ProductOwnerAgent(self._llm_class, self._llm_args)
+        self.requirements_agent = RequirementsAnalystAgent(self._llm_class, self._llm_args)
+        self.architect_agent = SoftwareArchitectAgent(self._llm_class, self._llm_args)
+        self.doc_agent = DocumentationAgent(self._llm_class, self._llm_args)
+
+        # Execution agents initialized later (after planning/model switch)
+        self.dev_agent = None
+        self.reviewer_agent = None
+        self.tester_agent = None
+        self.unit_test_agent = None
+
+        # Preserve base system prompt to avoid unbounded growth when injecting skills.
+        self._dev_base_system_prompt = None
+
+        # File verification is expensive; keep it on by default to avoid empty tool runs.
+        self.enable_file_verification = os.getenv("ENABLE_FILE_VERIFICATION", "true").lower() == "true"
+        
+        # Try to import SADT planner (optional)
+        try:
+            from agents import SADTSARTPlannerAgent
+            self.sadt_sart_agent = SADTSARTPlannerAgent(self._llm_class, self._llm_args)
+        except ImportError:
+            print("⚠️ SADTSARTPlannerAgent not available, using simple planner")
+            self.sadt_sart_agent = None
+
+        # Seed tool-usage memory guidance (global + project scopes)
+        self._seed_tool_usage_memory()
+        
+        
+        
+        print(f"\n✅ Orchestrator initialized for project: {project_name}")
+        print(f"   Provider: {provider}")
+        if self.planning_model:
+            print(f"   Planning Model: {self.planning_model}")
+        print(f"   Model: {self.model_name}")
+        print(f"   Testing: {'Enabled' if run_tests else 'Disabled'}")
+        print(f"   Loaded {len(self.skill_manager.skills)} skills")
+
+    def _configure_llm(self, model_override: Optional[str] = None):
+        """(Re)configure LLM + embeddings for a given model."""
+        llm_class, llm_args, token_counter = configure_llm_and_embed(self.provider, model_override)
+        self.model_name = llm_args.get("model_name") or llm_args.get("model")
+
+        if hasattr(self, "cost_tracker") and self.cost_tracker:
+            self.cost_tracker.token_counter = token_counter
+            self.cost_tracker.processed_calls = 0
+        else:
+            self.cost_tracker = CostTracker(token_counter)
+
+        return llm_class, llm_args, token_counter
+
+    def _init_execution_agents(self):
+        """Initialize execution-phase agents using the execution model."""
+        llm_class, llm_args, _ = self._configure_llm(self.execution_model)
+        self._llm_class = llm_class
+        self._llm_args = llm_args
+
+        self.dev_agent = DeveloperAgent(llm_class, llm_args, self.tools, self.logger, self.skill_manager)
+        self.reviewer_agent = CodeReviewerAgent(llm_class, llm_args, self.tools, self.logger, self.skill_manager)
+        self.tester_agent = TesterAgent(llm_class, llm_args, self.project_dir) if self.run_tests_enabled else None
+        self.unit_test_agent = UnitTestAgent(llm_class, llm_args)
+
+        # Preserve base system prompt to avoid unbounded growth when injecting skills.
+        self._dev_base_system_prompt = self.dev_agent.agent.system_prompt
+
+    def _inject_skills(self, base_message: str, task_description: str, 
+                      agent_type: str) -> str:
+        """Inject relevant skills into system message."""
+        
+        # Token budgets by agent type
+        budgets = {
+            'developer': 40000,   # Developers need detailed guidance
+            'planner': 20000,     # Planners need less
+            'reviewer': 30000,    # Reviewers need comprehensive rules
+        }
+        
+        budget = budgets.get(agent_type, 30000)
+        
+        # Get relevant skills
+        skills_content = self.skill_manager.get_skills_for_task(
+            task_description=task_description,
+            token_budget=budget
+        )
+        
+        if skills_content:
+            # Inject at the end of system message
+            return f"{base_message}\n\n{skills_content}"
+        else:
+            return base_message
+
+    def _seed_tool_usage_memory(self) -> None:
+        guidance = (
+            "Tool usage rules: list_files takes no args. read_file requires filename. "
+            "write_file only for new files. insert_text/replace_text for existing files. "
+            "submit_review input must be {\"report\": {\"issues\": [...], \"confidence\": 0.x}} "
+            "and must not include args/kwargs wrappers."
+        )
+        self._remember_memory(
+            content=guidance,
+            agent_name=None,
+            memory_type="procedural",
+            tags=["tool_rules", "global_guidance", f"project:{self.project_name}"],
+            importance=0.9,
+            store_global=True,
+        )
+
+    def _detect_reviewer_tool_errors(self, review_history: List[Dict]) -> bool:
+        if not review_history:
+            return False
+
+        def _extract_result_dict(raw_result) -> Optional[Dict]:
+            if isinstance(raw_result, dict):
+                return raw_result
+            text = str(raw_result or "").strip()
+            if not text:
+                return None
+            # Tool outputs are sometimes repr(dict) wrapped in another object repr.
+            match = re.search(r"\{.*\}", text, re.DOTALL)
+            candidate = match.group(0) if match else text
+            try:
+                return ast.literal_eval(candidate)
+            except Exception:
+                try:
+                    return json.loads(candidate)
+                except Exception:
+                    return None
+
+        for entry in review_history:
+            result = str(entry.get("result", "")).lower()
+            tool_name = str(entry.get("tool_name", "")).lower()
+            if tool_name not in ("list_files", "read_file", "get_code_summary", "directory_exists", "submit_review"):
+                continue
+
+            structured = _extract_result_dict(entry.get("result"))
+            if isinstance(structured, dict):
+                if structured.get("success") is False:
+                    return True
+                if structured.get("success") is True:
+                    continue
+                if "error" in structured and structured.get("error"):
+                    return True
+
+            # Fallback to textual markers for genuine tool-call schema/runtime failures only.
+            if (
+                "unexpected keyword argument" in result
+                or "missing required positional argument" in result
+                or "validation error" in result
+                or "traceback" in result
+                or "toolerror" in result
+            ):
+                if "success': true" in result or '"success": true' in result:
+                    continue
+                return True
+        return False
+
+    def _get_memory_context(
+        self,
+        query: str,
+        agent_name: Optional[str] = None,
+        top_k: int = 5,
+        max_chars: int = 2000,
+    ) -> str:
+        if not getattr(self, "memory", None):
+            return ""
+        if not self.memory.enabled:
+            return ""
+        try:
+            return self.memory.recall_combined(
+                query=query,
+                project_name=self.project_name,
+                agent_name=agent_name,
+                top_k=top_k,
+                max_chars=max_chars,
+            )
+        except Exception:
+            return ""
+
+    def _remember_memory(
+        self,
+        content: str,
+        agent_name: Optional[str],
+        memory_type: str,
+        tags: Optional[List[str]] = None,
+        importance: float = 0.5,
+        store_global: bool = False,
+    ) -> None:
+        if not getattr(self, "memory", None) or not self.memory.enabled:
+            return
+        try:
+            self.memory.remember(
+                content=content,
+                project_name=self.project_name,
+                agent_name=agent_name,
+                memory_type=memory_type,
+                importance=importance,
+                tags=tags or [],
+                store_global=store_global,
+            )
+        except Exception:
+            return
+
+    def _truncate_text(self, text: str, max_len: int = 1500) -> str:
+        if text is None:
+            return ""
+        if len(text) <= max_len:
+            return text
+        return text[:max_len] + "..."
+        
+
+    async def _run_developer_agent(self, task_description):
+        """Run developer with relevant skills injected."""
+        
+        # Inject relevant skills into system message (without mutating the base prompt permanently)
+        injected_prompt = self._inject_skills(
+            base_message=self._dev_base_system_prompt,
+            task_description=task_description,
+            agent_type='developer'
+        )
+        original_prompt = self.dev_agent.agent.system_prompt
+        self.dev_agent.agent.system_prompt = injected_prompt
+
+        try:
+            success, dev_output, tool_calls = await self.dev_agent.run(
+                task_description,
+                system_prompt=injected_prompt
+            )
+            return success, dev_output, tool_calls
+        finally:
+            self.dev_agent.agent.system_prompt = original_prompt
+    
+    def _create_minimal_tools(self):
+        """Create minimal tools implementation if OrchestratorTools not available"""
+        class MinimalTools:
+            def __init__(self, orchestrator):
+                self.orch = orchestrator
+            
+            def read_file(self, filename):
+                if filename in self.orch.files:
+                    return {"success": True, "content": self.orch.files[filename]}
+                return {"success": False, "error": f"File '{filename}' not found"}
+            
+            def write_file(self, filename, content):
+                self.orch.files[filename] = content
+                filepath = os.path.join(self.orch.project_dir, filename)
+                os.makedirs(os.path.dirname(filepath), exist_ok=True)
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                return {"success": True, "message": f"File '{filename}' written"}
+            
+            def list_files(self):
+                return list(self.orch.files.keys())
+            
+            def get_code_summary(self, filename):
+                if filename not in self.orch.files:
+                    return "File not found"
+                content = self.orch.files[filename]
+                try:
+                    tree = ast.parse(content)
+                    summary = []
+                    for node in ast.walk(tree):
+                        if isinstance(node, ast.ClassDef):
+                            summary.append(f"Class: {node.name}")
+                        elif isinstance(node, ast.FunctionDef):
+                            summary.append(f"Function: {node.name}")
+                    return "\n".join(summary) if summary else "No classes or functions found"
+                except:
+                    return "Could not parse file"
+            
+            def submit_review(self, report):
+                return {"success": True, "report_received": True}
+            
+            def replace_text(self, filename, old_text, new_text):
+                if filename not in self.orch.files:
+                    return {"success": False, "error": "File not found"}
+                content = self.orch.files[filename]
+                if old_text not in content:
+                    return {"success": False, "error": "Old text not found"}
+                new_content = content.replace(old_text, new_text, 1)
+                self.orch.files[filename] = new_content
+                filepath = os.path.join(self.orch.project_dir, filename)
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write(new_content)
+                return {"success": True}
+            
+            def insert_text(self, filename, content_to_insert, before_text=None, after_text=None):
+                if filename not in self.orch.files:
+                    return {"success": False, "error": "File not found"}
+                content = self.orch.files[filename]
+                if after_text and after_text in content:
+                    new_content = content.replace(after_text, after_text + "\n" + content_to_insert, 1)
+                elif before_text and before_text in content:
+                    new_content = content.replace(before_text, content_to_insert + "\n" + before_text, 1)
+                else:
+                    new_content = content + "\n" + content_to_insert
+                self.orch.files[filename] = new_content
+                filepath = os.path.join(self.orch.project_dir, filename)
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write(new_content)
+                return {"success": True}
+            
+            def create_directory(self, dirname):
+                dirpath = os.path.join(self.orch.project_dir, dirname)
+                os.makedirs(dirpath, exist_ok=True)
+                return {"success": True}
+            
+            def delete_file(self, filename):
+                if filename in self.orch.files:
+                    del self.orch.files[filename]
+                filepath = os.path.join(self.orch.project_dir, filename)
+                if os.path.exists(filepath):
+                    os.remove(filepath)
+                return {"success": True}
+            
+            def add_code_block(self, filepath, new_code, location, target_name=None):
+                # Simplified version - just append
+                if filepath not in self.orch.files:
+                    return {"success": False, "error": "File not found"}
+                content = self.orch.files[filepath]
+                new_content = content + "\n\n" + new_code
+                self.orch.files[filepath] = new_content
+                file_path = os.path.join(self.orch.project_dir, filepath)
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(new_content)
+                return {"success": True}
+            
+            def refactor_rename_symbol(self, filepath, old_name, new_name, symbol_type="all"):
+                # Simplified version - just replace
+                if filepath not in self.orch.files:
+                    return {"success": False, "error": "File not found"}
+                content = self.orch.files[filepath]
+                new_content = content.replace(old_name, new_name)
+                self.orch.files[filepath] = new_content
+                file_path = os.path.join(self.orch.project_dir, filepath)
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(new_content)
+                return {"success": True, "occurrences": content.count(old_name)}
+            
+            def delete_code_block(self, filepath, block_name, block_type="auto"):
+                # Simplified version - remove lines containing block_name
+                if filepath not in self.orch.files:
+                    return {"success": False, "error": "File not found"}
+                content = self.orch.files[filepath]
+                lines = content.split('\n')
+                new_lines = [line for line in lines if block_name not in line]
+                new_content = '\n'.join(new_lines)
+                self.orch.files[filepath] = new_content
+                file_path = os.path.join(self.orch.project_dir, filepath)
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(new_content)
+                return {"success": True}
+            
+            def call_agent(self, agent_name, message):
+                # Route to appropriate agent
+                agent_map = {
+                    "ProductOwnerAgent": self.orch.po_agent,
+                    "CodeReviewerAgent": self.orch.reviewer_agent,
+                    "DeveloperAgent": self.orch.dev_agent,
+                }
+                agent = agent_map.get(agent_name)
+                if agent:
+                    # Run async chat in sync context
+                    loop = asyncio.get_event_loop()
+                    return loop.run_until_complete(agent.chat(message))
+                return f"Agent {agent_name} not found"
+        
+        return MinimalTools(self)
+    
+    # ==================== STATE MANAGEMENT ====================
+    
+    def _clean_workspace(self):
+        """Clean workspace and initialize git"""
+        os.makedirs(self.project_path, exist_ok=True)
+        os.makedirs(self.workspace_dir, exist_ok=True)
+        
+        if not os.path.exists(os.path.join(self.workspace_dir, ".git")):
+            self.repo = git.Repo.init(self.workspace_dir)
+            gitignore_path = os.path.join(self.workspace_dir, ".gitignore")
+            with open(gitignore_path, "w", encoding="utf-8") as f:
+                f.write("__pycache__/\n*.pyc\n.env\n")
+            self.repo.index.add([".gitignore"])
+            self.repo.index.commit("Initial commit")
+            print("✅ Git repository initialized")
+        else:
+            self.repo = git.Repo(self.workspace_dir)
+    
+    def _save_state(self, last_completed_task_index=-1):
+        """Save state with atomic write"""
+        state = {
+            "last_completed_task_index": last_completed_task_index,
+            "plan": self.plan,
+            "sadt_plan": self.sadt_plan,
+            "planner_source": self.planner_source,
+            "files": self.files,
+            "run_command": self.run_command,
+            "technical_architecture": self.technical_architecture,
+            "cost_tracker_state": self.cost_tracker.to_dict(),
+            "metrics_tracker_state": self.metrics_tracker.to_dict(),
+            "schema_version": 1
+        }
+        
+        # Atomic write
+        temp_file = self.state_file + ".tmp"
+        with open(temp_file, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2)
+        os.replace(temp_file, self.state_file)
+    
+    def _load_state(self):
+        """Load state from disk"""
+        if not os.path.exists(self.state_file):
+            return
+        
+        with open(self.state_file, "r", encoding="utf-8") as f:
+            state = json.load(f)
+        
+        self.last_completed_task_index = state.get("last_completed_task_index", -1)
+        self.plan = state.get("plan", [])
+        self.sadt_plan = state.get("sadt_plan")
+        self.planner_source = state.get("planner_source")
+        self.files = state.get("files", {})
+        self.run_command = state.get("run_command", "")
+        self.technical_architecture = state.get("technical_architecture")
+
+    def _has_valid_saved_state(self) -> bool:
+        """Validate if saved state is sufficient to resume without re-planning."""
+        if not isinstance(self.plan, list) or len(self.plan) == 0:
+            return False
+        if not isinstance(self.technical_architecture, dict) or not self.technical_architecture:
+            return False
+
+        file_structure = self.technical_architecture.get("file_structure")
+        if file_structure is None:
+            return False
+        if not isinstance(file_structure, list) or len(file_structure) == 0:
+            return False
+
+        if self.last_completed_task_index >= len(self.plan):
+            return False
+
+        return True
+
+    def _estimate_review_complexity(self, git_diff: str, files_modified: List[str]) -> str:
+        """Heuristic complexity for review timeout selection."""
+        unique_files = {f for f in (files_modified or []) if f}
+        file_count = len(unique_files)
+        diff_lines = git_diff.count("\n") if git_diff else 0
+
+        if file_count >= 5 or diff_lines >= 300:
+            return "complex"
+        if file_count >= 2 or diff_lines >= 100:
+            return "medium"
+        return "simple"
+
+    def _get_review_timeout(self, git_diff: str, files_modified: List[str]) -> int:
+        complexity = self._estimate_review_complexity(git_diff, files_modified)
+        return REVIEW_TIMEOUT_CONFIG.get(complexity, REVIEW_TIMEOUT_CONFIG["simple"])
+
+    def _python_file_has_syntax_error(self, filepath: str) -> bool:
+        """Return True if Python file has a syntax error; False otherwise."""
+        full_path = os.path.join(self.project_dir, filepath)
+        if not os.path.exists(full_path):
+            return False
+        try:
+            with open(full_path, "r", encoding="utf-8") as f:
+                compile(f.read(), filepath, "exec")
+            return False
+        except SyntaxError:
+            return True
+        except Exception:
+            # Only treat syntax errors as validated issues
+            return False
+
+    def _validate_review_findings(self, issues: List[Dict], files_modified: List[str]) -> List[Dict]:
+        """Validate reviewer findings to reduce false positives."""
+        validated = []
+        for issue in issues or []:
+            issue_type = str(issue.get("type", "")).lower()
+            issue_file = issue.get("file", "")
+
+            if issue_file.endswith(".py") and issue_type == "syntax_error":
+                if not self._python_file_has_syntax_error(issue_file):
+                    print(f"⚠️ Reviewer flagged false positive syntax error: {issue.get('description', '')}")
+                    if self.logger:
+                        self.logger.log("WARNING", f"Reviewer false positive (syntax): {issue_file}")
+                    continue
+
+            validated.append(issue)
+
+        return validated
+    
+    def _save_checkpoint(self, checkpoint: TaskCheckpoint):
+        """Save checkpoint with proper serialization"""
+        self.task_checkpoints[checkpoint.task_index] = checkpoint
+        
+        checkpoints_data = {}
+        
+        for idx, cp in self.task_checkpoints.items():
+            try:
+                cp_dict = {
+                    'task_index': cp.task_index,
+                    'task_description': cp.task_description,
+                    'status': cp.status,
+                    'timestamp': cp.timestamp,
+                    'development_output': cp.development_output,
+                    'review_feedback': self._make_serializable(cp.review_feedback),
+                    'test_results': cp.test_results,
+                    'architecture_validation': self._make_serializable(cp.architecture_validation),
+                    'retry_count': cp.retry_count,
+                    'retry_history': self._make_serializable(cp.retry_history),
+                    'files_modified': cp.files_modified,
+                    'files_created': cp.files_created,
+                    'files_deleted': cp.files_deleted,
+                    'depends_on': cp.depends_on,
+                    'blocked_by': cp.blocked_by,
+                    'git_commit_sha': cp.git_commit_sha,
+                    'git_stash_ref': cp.git_stash_ref,
+                    'agent_interactions': self._make_serializable(cp.agent_interactions),
+                }
+                
+                checkpoints_data[str(idx)] = cp_dict
+            
+            except Exception as e:
+                print(f"⚠️ Error serializing checkpoint {idx}: {e}")
+                self.logger.log("WARNING", f"Failed to serialize checkpoint {idx}: {e}")
+                continue
+        
+        temp_file = self.checkpoint_file + ".tmp"
+        try:
+            with open(temp_file, "w", encoding="utf-8") as f:
+                json.dump(checkpoints_data, f, indent=2, ensure_ascii=False)
+            
+            os.replace(temp_file, self.checkpoint_file)
+            self.logger.log("INFO", f"Checkpoint saved for task {checkpoint.task_index}: {checkpoint.status}")
+        
+        except Exception as e:
+            print(f"⚠️ Error writing checkpoint file: {e}")
+            self.logger.log("ERROR", f"Failed to write checkpoint file: {e}")
+            if os.path.exists(temp_file):
+                try:
+                    os.remove(temp_file)
+                except:
+                    pass
+    
+    def _load_checkpoints(self):
+        """Load checkpoints with error recovery"""
+        if not os.path.exists(self.checkpoint_file):
+            return
+        
+        try:
+            with open(self.checkpoint_file, "r", encoding="utf-8") as f:
+                checkpoints_data = json.load(f)
+            
+            loaded_count = 0
+            for idx_str, cp_dict in checkpoints_data.items():
+                try:
+                    idx = int(idx_str)
+                    
+                    checkpoint = TaskCheckpoint(
+                        task_index=cp_dict.get('task_index', idx),
+                        task_description=cp_dict.get('task_description', ''),
+                        status=cp_dict.get('status', 'pending'),
+                        timestamp=cp_dict.get('timestamp', datetime.now().isoformat()),
+                        development_output=cp_dict.get('development_output'),
+                        review_feedback=cp_dict.get('review_feedback', []),
+                        test_results=cp_dict.get('test_results'),
+                        architecture_validation=cp_dict.get('architecture_validation'),
+                        retry_count=cp_dict.get('retry_count', 0),
+                        retry_history=cp_dict.get('retry_history', []),
+                        files_modified=cp_dict.get('files_modified', []),
+                        files_created=cp_dict.get('files_created', []),
+                        files_deleted=cp_dict.get('files_deleted', []),
+                        depends_on=cp_dict.get('depends_on', []),
+                        blocked_by=cp_dict.get('blocked_by', []),
+                        git_commit_sha=cp_dict.get('git_commit_sha'),
+                        git_stash_ref=cp_dict.get('git_stash_ref'),
+                        agent_interactions=cp_dict.get('agent_interactions', []),
+                    )
+                    
+                    self.task_checkpoints[idx] = checkpoint
+                    loaded_count += 1
+                
+                except Exception as e:
+                    print(f"⚠️ Failed to load checkpoint {idx_str}: {e}")
+                    continue
+            
+            self.logger.log("INFO", f"Loaded {loaded_count} task checkpoints")
+        
+        except Exception as e:
+            print(f"⚠️ Error loading checkpoints file: {e}")
+            self.logger.log("WARNING", f"Failed to load checkpoints: {e}")
+    
+    # ==================== GIT ROLLBACK ====================
+    
+    def _create_task_savepoint(self, task_index: int) -> Optional[str]:
+        """
+        Create a git stash before starting a task for rollback capability.
+        
+        Args:
+            task_index: Index of the task
+        
+        Returns:
+            Stash reference string or None
+        """
+        if not self.repo:
+            return None
+        
+        try:
+            # Check if there are changes to stash
+            if self.repo.is_dirty(untracked_files=True):
+                stash_msg = f"savepoint_task_{task_index}"
+                self.repo.git.stash('save', '-u', stash_msg)
+                print(f"✓ Created savepoint: {stash_msg}")
+                return stash_msg
+            else:
+                print(f"✓ No changes to savepoint for task {task_index}")
+                return None
+        except Exception as e:
+            print(f"⚠️ Failed to create savepoint: {e}")
+            return None
+    
+    def _rollback_to_savepoint(self, stash_ref: str) -> bool:
+        """
+        Rollback to a git stash.
+        
+        Args:
+            stash_ref: Stash reference to rollback to
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.repo or not stash_ref:
+            return False
+        
+        try:
+            # Find the stash
+            stashes = self.repo.git.stash('list').split('\n')
+            stash_index = None
+            
+            for i, stash in enumerate(stashes):
+                if stash_ref in stash:
+                    stash_index = i
+                    break
+            
+            if stash_index is not None:
+                # Apply the stash
+                try:
+                    self.repo.git.stash('apply', f'stash@{{{stash_index}}}')
+                except git.exc.GitCommandError as e:
+                    print(f"⚠️ Rollback encountered conflict: {e}")
+                    # Auto-resolve by taking stash version ("theirs")
+                    try:
+                        conflicted = self.repo.git.diff('--name-only', '--diff-filter=U').splitlines()
+                        for path in conflicted:
+                            if not path.strip():
+                                continue
+                            self.repo.git.checkout('--theirs', '--', path)
+                            self.repo.git.add(path)
+                        print(f"✓ Auto-resolved {len(conflicted)} conflicted files using stash version.")
+                    except Exception as resolve_err:
+                        print(f"❌ Auto-resolve failed: {resolve_err}")
+                        traceback.print_exc()
+                        return False
+                # Drop the stash
+                self.repo.git.stash('drop', f'stash@{{{stash_index}}}')
+                print(f"✓ Rolled back to savepoint: {stash_ref}")
+                
+                # Reload files from disk
+                self._build_index_from_disk()
+                return True
+            else:
+                print(f"⚠️ Savepoint not found: {stash_ref}")
+                return False
+        
+        except Exception as e:
+            print(f"❌ Rollback failed: {e}")
+            traceback.print_exc()
+            return False
+        
+
+    def _make_serializable(self, obj):
+        """
+        Recursively convert non-serializable objects to JSON-serializable format.
+        
+        Handles:
+        - AttributedDict (from LlamaIndex)
+        - Custom objects
+        - Dataclasses
+        - Tuples (converts to lists)
+        - Any dict-like objects
+        
+        Args:
+            obj: Object to convert
+        
+        Returns:
+            JSON-serializable version of the object
+        """
+        # Handle None
+        if obj is None:
+            return None
+        
+        # Handle primitives (already serializable)
+        if isinstance(obj, (str, int, float, bool)):
+            return obj
+        
+        # Handle lists
+        if isinstance(obj, list):
+            return [self._make_serializable(item) for item in obj]
+        
+        # Handle tuples (convert to list for JSON)
+        if isinstance(obj, tuple):
+            return [self._make_serializable(item) for item in obj]
+        
+        # Handle dicts and dict-like objects (including AttributedDict)
+        if isinstance(obj, dict) or hasattr(obj, 'items'):
+            result = {}
+            try:
+                # Get items (works for dict and AttributedDict)
+                if hasattr(obj, 'items'):
+                    items = obj.items()
+                else:
+                    items = []
+                
+                for key, value in items:
+                    # Ensure key is string
+                    str_key = str(key) if not isinstance(key, str) else key
+                    # Recursively convert value
+                    result[str_key] = self._make_serializable(value)
+                
+                return result
+            
+            except Exception as e:
+                # If items() fails, try converting to dict
+                try:
+                    return self._make_serializable(dict(obj))
+                except:
+                    # Last resort: string representation
+                    print(f"⚠️ Could not serialize object of type {type(obj)}: {e}")
+                    return str(obj)
+        
+        # Handle dataclasses (but avoid recursion with AttributedDict)
+        if hasattr(obj, '__dataclass_fields__'):
+            try:
+                # First convert to dict with asdict
+                obj_dict = {}
+                for field_name in obj.__dataclass_fields__:
+                    field_value = getattr(obj, field_name)
+                    obj_dict[field_name] = self._make_serializable(field_value)
+                return obj_dict
+            except:
+                pass
+        
+        # Handle objects with __dict__ attribute
+        if hasattr(obj, '__dict__'):
+            try:
+                return self._make_serializable(obj.__dict__)
+            except:
+                pass
+        
+        # Fallback: convert to string
+        try:
+            return str(obj)
+        except:
+            return "<unserializable object>"
+    
+    # ==================== GIT OPERATIONS ====================
+    
+    def _git_commit(self, message: str):
+        """Create a git commit"""
+        try:
+            if self.repo.is_dirty(untracked_files=True):
+                self.repo.git.add(A=True)
+                commit = self.repo.index.commit(message)
+                print(f"✅ Git commit created: '{message}' ({commit.hexsha[:7]})")
+                return commit.hexsha
+        except Exception as e:
+            print(f"⚠️ Git commit failed: {e}")
+            self.logger.log("ERROR", f"Git commit failed: {e}")
+            return None
+    
+    def _get_project_diff(self) -> str:
+        """Get git diff of all changes"""
+        if not self.repo:
+            return "Git repository not initialized."
+        
+        self.repo.git.add(A=True)
+        return self.repo.git.diff('HEAD')
+    
+    def _get_available_files(self):
+        if not os.path.exists(self.project_dir):
+            return
+        
+        for root, _, files in os.walk(self.project_dir):
+            for file in files:
+                filepath = os.path.join(root, file)
+                try:
+                    rel_path = os.path.relpath(filepath, self.project_dir)
+                    self.files[rel_path] = file
+                except Exception as e:
+                    self.logger.log("WARNING", f"Could not read {filepath}: {e}")
+    
+    # ==================== RAG INDEX ====================
+    
+    def _build_index_from_disk(self):
+        """Build RAG index from existing files"""
+        if not os.path.exists(self.project_dir):
+            return
+        
+        documents = []
+        for root, _, files in os.walk(self.project_dir):
+            for file in files:
+                if file.endswith('.py'):
+                    filepath = os.path.join(root, file)
+                    try:
+                        with open(filepath, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                        
+                        rel_path = os.path.relpath(filepath, self.project_dir)
+                        self.files[rel_path] = content
+                        
+                        doc = Document(
+                            text=content,
+                            metadata={'file_name': rel_path}
+                        )
+                        documents.append(doc)
+                    except Exception as e:
+                        self.logger.log("WARNING", f"Could not read {filepath}: {e}")
+        
+        if documents:
+            self.code_index = VectorStoreIndex.from_documents(documents)
+            self.logger.log("INFO", f"Built RAG index from {len(documents)} files")
+    
+    def _update_index_incrementally(self, changed_files: Optional[List[str]] = None):
+        """Update RAG index with current files"""
+        if not changed_files:
+            return
+
+        if not any(name.endswith('.py') for name in changed_files):
+            return
+
+        if not self.files:
+            self._build_index_from_disk()
+            return
+        
+        documents = []
+        for filename, content in self.files.items():
+            if filename.endswith('.py'):
+                doc = Document(
+                    text=content,
+                    metadata={'file_name': filename}
+                )
+                documents.append(doc)
+        
+        if documents:
+            self.code_index = VectorStoreIndex.from_documents(documents)
+    
+    def _get_rag_context(self, query: str) -> str:
+        """Retrieve relevant code context using RAG"""
+        if self.code_index:
+            retriever = self.code_index.as_retriever(similarity_top_k=3)
+            relevant_nodes = retriever.retrieve(query)
+            
+            if not relevant_nodes:
+                return "No relevant code snippets found."
+            
+            context_str = "Relevant code context:\n\n"
+            for node in relevant_nodes:
+                filename = node.metadata.get('file_name', 'unknown_file')
+                context_str += f"--- {filename} ---\n"
+                context_str += node.get_content() + "\n---\n"
+            return context_str
+        return "No code exists yet."
+    
+    # ==================== HELPER METHODS ====================
+    def extract_filenames_from_task(self, task: str) -> List[str]:
+        """Extract expected filenames from task description"""
+        # Extract any file-like tokens from both instruction and output clauses.
+        patterns = [
+            r'([A-Za-z0-9_./-]+\.(?:py|tsx|ts|jsx|js|txt|yml|yaml|json|md|css|html))',
+        ]
+
+        files: List[str] = []
+        for pattern in patterns:
+            for match in re.findall(pattern, task):
+                candidate = match.strip(".,;:()[]{}'\"")
+                if candidate:
+                    files.append(candidate)
+
+        return sorted(set(files))
+    
+    def _get_project_structure_string(self) -> str:
+        """Generate string representation of project structure"""
+        structure = []
+        
+        for root, dirs, files in os.walk(self.project_dir):
+            dirs[:] = [d for d in dirs if d != '.git']
+            
+            level = root.replace(self.project_dir, '').count(os.sep)
+            indent = ' ' * 2 * level
+            structure.append(f'{indent}{os.path.basename(root)}/')
+            
+            subindent = ' ' * 2 * (level + 1)
+            for file in sorted(files):
+                structure.append(f'{subindent}{file}')
+        
+        return '\n'.join(structure)
+    
+    def _build_retry_context_from_conversations(
+        self, 
+        checkpoint: TaskCheckpoint, 
+        task: str
+    ) -> str:
+        """
+        Build retry context using agent conversation history.
+        
+        This leverages the conversation framework from base_agent.py
+        to show the developer what happened in previous attempts.
+        
+        Args:
+            checkpoint: Current task checkpoint
+            task: Original task description
+        
+        Returns:
+            Formatted context string with conversation history
+        """
+        if checkpoint.retry_count == 0:
+            return ""  # First attempt, no history
+        
+        context_parts = []
+        recent_error_types = [r.get('error_type', '') for r in checkpoint.retry_history[-3:]]
+        repeated_no_tool_calls = recent_error_types.count('no_tool_calls') >= 2
+        
+        # Header
+        context_parts.append(f"\n{'='*70}")
+        context_parts.append(f"⚠️  RETRY ATTEMPT #{checkpoint.retry_count + 1}")
+        context_parts.append(f"{'='*70}\n")
+        
+        # Show what went wrong in previous attempts
+        if checkpoint.retry_history:
+            context_parts.append("📋 PREVIOUS ATTEMPTS:")
+            for i, retry in enumerate(checkpoint.retry_history, 1):
+                error_type = retry['error_type']
+                error_msg = retry['error_message'][:150]
+                context_parts.append(f"\n  Attempt {i} - Failed:")
+                context_parts.append(f"    Error Type: {error_type}")
+                context_parts.append(f"    Error: {error_msg}...")
+        
+        # Get conversation history between Developer and Reviewer
+        dev_reviewer_conv = self.dev_agent._get_or_create_conversation("CodeReviewerAgent")
+        
+        if repeated_no_tool_calls:
+            context_parts.append("\nRESET CONTEXT: Repeated no_tool_calls failures detected; ignore prior conversation patterns.")
+        elif dev_reviewer_conv.history:
+                context_parts.append(f"\n💬 CONVERSATION HISTORY WITH REVIEWER:")
+                conv_summary = dev_reviewer_conv.get_summary(max_chars=800)
+                context_parts.append(f"    {conv_summary}")
+        
+        # Show specific review feedback
+        if checkpoint.review_feedback:
+            context_parts.append(f"\n🔍 DETAILED REVIEW FEEDBACK:")
+            for i, issue in enumerate(checkpoint.review_feedback, 1):
+                severity = issue.get('severity', 'unknown').upper()
+                file_loc = f"{issue.get('file', '?')}:{issue.get('line', '?')}"
+                desc = issue.get('description', 'No description')
+                sugg = issue.get('suggestion', 'No suggestion provided')
+                
+                context_parts.append(f"\n  Issue {i} [{severity}] at {file_loc}:")
+                context_parts.append(f"    Problem: {desc}")
+                context_parts.append(f"    Fix Required: {sugg}")
+        
+        # Warning for stuck loops
+        if checkpoint.retry_count >= 3:
+            recent_errors = [r['error_type'] for r in checkpoint.retry_history[-3:]]
+            if len(set(recent_errors)) == 1:
+                context_parts.append(f"\n🚨 WARNING: You've made the same '{recent_errors[0]}' error 3 times!")
+                context_parts.append(f"    TRY A COMPLETELY DIFFERENT APPROACH!")
+                if recent_errors[0] == "no_tool_calls":
+                    context_parts.append("    REQUIRED: Emit one valid tool call in strict Action/Action Input format before long reasoning.")
+        
+        if repeated_no_tool_calls:
+            context_parts.append("\nSTRICT TOOL FORMAT (REQUIRED FOR NEXT ATTEMPT):")
+            context_parts.append("  - Use exactly: Action: <tool_name>")
+            context_parts.append('  - Use exactly: Action Input: {"filename":"...","content":"..."}')
+            context_parts.append("  - DO NOT use inline syntax like Action: tool({...})")
+            context_parts.append("  - DO NOT wrap inputs in kwargs/args containers unless the tool schema requires it")
+
+        # Action items
+        context_parts.append(f"\n{'='*70}")
+        context_parts.append(f"⚡ ACTION REQUIRED:")
+        context_parts.append(f"    1. Read ALL the feedback above carefully")
+        context_parts.append(f"    2. Fix EACH issue mentioned")
+        context_parts.append(f"    3. Verify your changes")
+        context_parts.append(f"{'='*70}\n")
+        
+        return "\n".join(context_parts)
+
+    def _collect_clarifications(self, questions: List[str]) -> str:
+        """Prompt user for clarifying answers in the CLI."""
+        if not questions:
+            return ""
+
+        print("\n🧭 Clarification needed before planning.")
+        answers = []
+        for i, q in enumerate(questions, 1):
+            print(f"\nQuestion {i}: {q}")
+            ans = input("Your answer (press Enter to accept default/skip): ").strip()
+            if ans:
+                answers.append(f"{i}. Q: {q}\n   A: {ans}")
+            else:
+                answers.append(f"{i}. Q: {q}\n   A: [default/assumed]")
+
+        return "\n".join(answers)
+
+    def _find_placeholders_in_files(self, file_list: List[str]) -> List[Dict]:
+        """Scan modified files for placeholder content or TODOs."""
+        if not file_list:
+            return []
+
+        patterns = [
+            r'\bTODO\b',
+            r'\bFIXME\b',
+            r'\bplaceholder\b',
+            r'NotImplementedError',
+            r'\bpass\b\s*#',
+        ]
+        compiled = [re.compile(p, re.IGNORECASE) for p in patterns]
+        issues = []
+
+        for rel_path in file_list:
+            if not rel_path:
+                continue
+            full_path = os.path.join(self.project_dir, rel_path)
+            if not os.path.exists(full_path):
+                continue
+            try:
+                with open(full_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                for pattern in compiled:
+                    if pattern.search(content):
+                        issues.append({
+                            "severity": "major",
+                            "type": "incomplete_feature",
+                            "file": rel_path,
+                            "line": 0,
+                            "description": "Placeholder or TODO text found in file. Production code must be complete.",
+                            "suggestion": "Remove placeholders/TODOs and implement the missing logic."
+                        })
+                        break
+            except Exception as e:
+                self.logger.log("WARNING", f"Placeholder scan failed for {rel_path}: {e}")
+
+        return issues
+    
+    # ==================== MAIN ORCHESTRATION LOOP ====================
+    
+    async def run(self):
+        """
+        Main orchestration loop with enhanced error handling and rollback
+        """
+        project_completed_successfully = False
+        
+        try:
+            if self.is_resuming and self._has_valid_saved_state():
+                print("\nResuming from saved state. Skipping requirements, architecture, and planning.")
+                clarified_prompt = self.user_prompt
+            else:
+                if self.is_resuming:
+                    print("\nSaved state incomplete or invalid. Re-running requirements, architecture, and planning.")
+                # --- Phase 1: Requirements Analysis ---
+                self.logger.log_phase("Requirements Analysis")
+                print("\n=== Phase 1: Requirements Analysis ===")
+
+                req_memory = self._get_memory_context(
+                    self.user_prompt,
+                    agent_name="RequirementsAnalystAgent"
+                )
+                requirements_output = self.requirements_agent.analyze_requirements(
+                    self.user_prompt, req_memory
+                )
+                self.cost_tracker.calculate_and_print_cost(self.model_name)
+
+                # Extract refined prompt
+                clarified_prompt = requirements_output.get("refined_prompt", self.user_prompt)
+                if not isinstance(clarified_prompt, str):
+                    try:
+                        clarified_prompt = json.dumps(clarified_prompt, ensure_ascii=False, indent=2)
+                    except Exception:
+                        clarified_prompt = str(clarified_prompt)
+
+                questions = requirements_output.get("questions", [])
+
+                if questions:
+                    print(f"\nRequirements analyst has {len(questions)} clarifying questions:")
+                    for i, q in enumerate(questions, 1):
+                        print(f"  {i}. {q}")
+                    clarification_notes = self._collect_clarifications(questions)
+                    if clarification_notes:
+                        clarified_prompt = (
+                            f"{clarified_prompt}\n\nCLARIFICATIONS:\n{clarification_notes}"
+                        )
+
+                # Save requirements
+                os.makedirs(self.project_path, exist_ok=True)
+                with open(self.requirements_file, 'w', encoding='utf-8') as f:
+                    f.write(clarified_prompt)
+
+                print(f"Requirements analyzed and saved {clarified_prompt}")
+
+                self._remember_memory(
+                    content=self._truncate_text(clarified_prompt, 1800),
+                    agent_name="RequirementsAnalystAgent",
+                    memory_type="context",
+                    tags=["phase:requirements", f"project:{self.project_name}"],
+                    importance=0.7,
+                )
+
+                # Use full specification to avoid losing requirements in planning
+                planning_prompt = clarified_prompt
+                if self.user_prompt and self.user_prompt not in clarified_prompt:
+                    planning_prompt = f"{clarified_prompt}\n\nFULL SPECIFICATION:\n{self.user_prompt}"
+
+                # --- Phase 2: Architecture Design ---
+                self.logger.log_phase("Architecture Design")
+                print("\n=== Phase 2: Architecture Design ===")
+
+                arch_memory = self._get_memory_context(
+                    planning_prompt,
+                    agent_name="SoftwareArchitectAgent"
+                )
+                planning_prompt_with_memory = f"{planning_prompt}\n\n{arch_memory}"
+                architecture = self.architect_agent.design_architecture(
+                    planning_prompt_with_memory,
+                    self.logger
+                )
+                self.cost_tracker.calculate_and_print_cost(self.model_name)
+
+                if not architecture:
+                    raise ValueError("Architecture design failed")
+
+                self.technical_architecture = architecture
+                self.run_command = architecture.get("run_command", "")
+
+                print("Architecture designed")
+                print(f"   Stack: {architecture.get('technology_stack', 'Unknown')}")
+                print(f"   Files: {len(architecture.get('file_structure', []))}")
+
+                try:
+                    arch_summary = {
+                        "technology_stack": architecture.get("technology_stack"),
+                        "run_command": architecture.get("run_command"),
+                        "file_count": len(architecture.get("file_structure", [])),
+                    }
+                    self._remember_memory(
+                        content=self._truncate_text(json.dumps(arch_summary, ensure_ascii=False), 1200),
+                        agent_name="SoftwareArchitectAgent",
+                        memory_type="context",
+                        tags=["phase:architecture", f"project:{self.project_name}"],
+                        importance=0.7,
+                    )
+                except Exception:
+                    pass
+
+                # --- Phase 3: Planning ---
+                self.logger.log_phase("Task Planning")
+                print("\n=== Phase 3: Task Planning ===")
+
+                plan_memory = self._get_memory_context(
+                    planning_prompt,
+                    agent_name="SADTSARTPlannerAgent"
+                )
+                planning_prompt_with_memory = f"{planning_prompt}\n\n{plan_memory}"
+
+                # Try SADT planner if available, fallback to simple planning
+                if self.sadt_sart_agent:
+                    try:
+                        self.plan, run_cmd_from_plan = self.sadt_sart_agent.create_plan(
+                            planning_prompt_with_memory,
+                            architecture,
+                            self.logger
+                        )
+                        self.sadt_plan = list(self.plan)
+                        self.planner_source = "sadt"
+                        if run_cmd_from_plan:
+                            self.run_command = run_cmd_from_plan
+                    except Exception as e:
+                        print(f"SADT planner failed: {e}, using simple planner")
+                        self.plan = self._create_simple_plan(architecture)
+                        self.sadt_plan = None
+                        self.planner_source = "simple"
+                else:
+                    self.plan = self._create_simple_plan(architecture)
+                    self.sadt_plan = None
+                    self.planner_source = "simple"
+
+                self.cost_tracker.calculate_and_print_cost(self.model_name)
+
+                if not self.plan:
+                    raise ValueError("Planning failed - no tasks generated")
+
+                print(f"Plan created with {len(self.plan)} tasks")
+
+                # Initialize progress tracker
+                self.progress_tracker = ProgressTracker(len(self.plan))
+
+            # Ensure execution agents are initialized with execution model
+            if not self.dev_agent or not self.reviewer_agent:
+                self._init_execution_agents()
+                if self.execution_model:
+                    print(f"✅ Execution model: {self.execution_model}")
+                
+                # Save initial state
+                self._save_state(self.last_completed_task_index)
+
+            if not self.progress_tracker:
+                self.progress_tracker = ProgressTracker(len(self.plan))
+            # Align progress counters when resuming.
+            if self.is_resuming and self.task_checkpoints:
+                completed_count = sum(
+                    1 for cp in self.task_checkpoints.values()
+                    if cp.status == TaskStatus.COMPLETED.value
+                )
+                self.progress_tracker.completed_tasks = completed_count
+                self.progress_tracker.processed_tasks = min(
+                    len(self.plan),
+                    max(0, self.last_completed_task_index + 1)
+                )
+            
+            # --- Phase 4: Development Loop ---
+            self.logger.log_phase("Development")
+            print("\n=== 💻 Phase 4: Development ===")
+            
+            current_task_index = self.last_completed_task_index + 1
+            
+            while current_task_index < len(self.plan):
+                task = self.plan[current_task_index]
+                
+                # Start progress tracking
+                self.progress_tracker.start_task(current_task_index, task)
+                
+                # Get or create checkpoint
+                if current_task_index in self.task_checkpoints:
+                    checkpoint = self.task_checkpoints[current_task_index]
+                else:
+                    checkpoint = TaskCheckpoint(
+                        task_index=current_task_index,
+                        task_description=task,
+                        status=TaskStatus.PENDING.value,
+                        timestamp=datetime.now().isoformat()
+                    )
+                    self._save_checkpoint(checkpoint)
+                
+                print(f"\n{'='*60}")
+                print(f"Task {current_task_index + 1}/{len(self.plan)}")
+                print(f"Description: {task}")
+                print(f"Status: {checkpoint.status}")
+                print(f"Retry count: {checkpoint.retry_count}")
+                print(f"{'='*60}\n")
+                
+                # Check retry limit
+                if checkpoint.retry_count >= self.max_retry_attempts:
+                    print(f"❌ Task failed after {checkpoint.retry_count} attempts, skipping...")
+                    checkpoint.status = TaskStatus.FAILED.value
+                    self._save_checkpoint(checkpoint)
+                    self.progress_tracker.complete_task(success=False)
+                    current_task_index += 1
+                    continue
+                
+                # Create savepoint before task execution
+                savepoint = self._create_task_savepoint(current_task_index)
+                if savepoint:
+                    checkpoint.git_stash_ref = savepoint
+                    self._save_checkpoint(checkpoint)
+                
+                try:
+                    # --- Development Phase ---
+                    checkpoint.status = TaskStatus.IN_PROGRESS.value
+                    self._save_checkpoint(checkpoint)
+
+                    print(f"\n🔧 Developer working on task...")
+
+                    # Get RAG context
+                    rag_context = self._get_rag_context(task)
+
+                    # 🆕 Build retry context from conversation history
+                    retry_context = self._build_retry_context_from_conversations(checkpoint, task)
+
+                    # Show conversation stats if retrying
+                    if checkpoint.retry_count > 0:
+                        dev_reviewer_conv = self.dev_agent._get_or_create_conversation("CodeReviewerAgent")
+                        if dev_reviewer_conv.history:
+                            print(f"💬 Loading conversation history: {len(dev_reviewer_conv.history)} messages")
+
+                    # Combine all context
+                    dev_memory = self._get_memory_context(task, agent_name="DeveloperAgent")
+                    dev_tool_memory = self._get_memory_context("tool usage rules", agent_name="DeveloperAgent")
+                    enhanced_task = f"{task}\n\n{rag_context}{retry_context}{dev_memory}{dev_tool_memory}"
+
+                    # 🆕 Record task start in conversation
+                    orchestrator_conv = self.dev_agent._get_or_create_conversation("orchestrator")
+                    orchestrator_conv.add_message(
+                        "system",
+                        f"Starting task {current_task_index + 1}: {task[:100]}..."
+                    )
+
+                    # Execute development
+                    success, dev_output, tool_calls = await self._run_developer_agent(enhanced_task)
+
+                    # 🆕 Record completion in conversation
+                    orchestrator_conv.add_message(
+                        "assistant",
+                        f"Completed with {len(tool_calls)} tool calls. Files modified: {[tc.get('tool_args', {}).get('filename', '?') for tc in tool_calls if tc.get('tool_name') in ['write_file', 'replace_text']]}"
+                    )
+
+                    # File verification
+                    expected_files = self.extract_filenames_from_task(task)
+                    if len(tool_calls) == 0:
+                        print("❌ DEVELOPMENT FAILED: No tool calls were executed.")
+                        checkpoint.add_retry("no_tool_calls", "Developer returned completion without using tools")
+                        self._remember_memory(
+                            content=f"Developer used zero tools for task '{task}'. Force retry.",
+                            agent_name="DeveloperAgent",
+                            memory_type="event",
+                            tags=["retry", "no_tool_calls", f"project:{self.project_name}"],
+                            importance=0.9,
+                            store_global=True
+                        )
+                        checkpoint.status = TaskStatus.PENDING.value
+                        self._save_checkpoint(checkpoint)
+                        continue
+                    if self.enable_file_verification and expected_files:
+                        self._get_available_files()
+                        missing = [f for f in expected_files if f not in self.files]
+                        
+                        if missing:
+                            print(f"❌ VERIFICATION FAILED")
+                            print(f"❌ Task claims complete but these files missing: {missing}")
+                            
+                            # 🆕 Record failure in conversation
+                            dev_reviewer_conv = self.dev_agent._get_or_create_conversation("CodeReviewerAgent")
+                            dev_reviewer_conv.add_message(
+                                "system",
+                                f"❌ File verification failed. Missing: {', '.join(missing)}"
+                            )
+                            
+                            # Force retry
+                            checkpoint.add_retry("files_not_created", f"{len(missing)} files missing")
+                            self._remember_memory(
+                                content=f"Retry needed: files not created for task '{task}'. Missing: {', '.join(missing)}",
+                                agent_name="DeveloperAgent",
+                                memory_type="event",
+                                tags=["retry", "files_not_created", f"project:{self.project_name}"],
+                                importance=0.8,
+                                store_global=True
+                            )
+                            checkpoint.status = TaskStatus.PENDING.value
+                            self._save_checkpoint(checkpoint)
+                            continue
+
+                    self.cost_tracker.calculate_and_print_cost(self.model_name)
+                    
+                    if not success:
+                        raise Exception("Development failed")
+                    
+                    checkpoint.development_output = dev_output
+                    checkpoint.status = TaskStatus.DEVELOPED.value
+                    checkpoint.files_modified = [tc["tool_args"].get("filename", "") 
+                                                for tc in tool_calls 
+                                                if tc["tool_name"] in ["write_file", "replace_text", "insert_text"]]
+                    self._save_checkpoint(checkpoint)
+                    
+                    print("✅ Development complete")
+                    
+                    # --- Review Phase ---
+                    print(f"\n🔍 Reviewer checking code...")
+
+                    project_structure = self._get_project_structure_string()
+                    git_diff = self._get_project_diff()
+
+                    # Adjust reviewer timeout based on change complexity
+                    review_timeout = self._get_review_timeout(git_diff, checkpoint.files_modified)
+                    if self.reviewer_agent:
+                        self.reviewer_agent.review_timeout = review_timeout
+                    if self.logger:
+                        self.logger.log("INFO", f"Reviewer timeout set to {review_timeout}s")
+
+                    # 🆕 Update reviewer's conversation with developer
+                    reviewer_dev_conv = self.reviewer_agent._get_or_create_conversation("DeveloperAgent")
+                    if checkpoint.retry_count == 0:
+                        reviewer_dev_conv.add_message(
+                            "user",
+                            f"First review of: {task[:100]}...\nFiles: {', '.join(checkpoint.files_modified[:5])}"
+                        )
+                    else:
+                        reviewer_dev_conv.add_message(
+                            "user",
+                            f"Re-review (attempt {checkpoint.retry_count + 1}). Developer should have fixed previous issues."
+                        )
+
+                    # Execute review
+                    review_memory = self._get_memory_context(task, agent_name="CodeReviewerAgent")
+                    review_tool_memory = self._get_memory_context("tool usage rules", agent_name="CodeReviewerAgent")
+                    review_task = f"{task}\n\n{review_memory}{review_tool_memory}"
+                    issues, review_history = await self.reviewer_agent.review_code(
+                        review_task,
+                        project_structure,
+                        git_diff,
+                        checkpoint.review_feedback
+                    )
+
+                    # 🆕 Store reviewer's findings in conversation
+                    if issues:
+                        issue_summary = f"Found {len(issues)} issues: " + \
+                                    "; ".join([f"{i.get('severity')}: {i.get('description', '')[:40]}" 
+                                                for i in issues[:3]])
+                        if len(issues) > 3:
+                            issue_summary += f" and {len(issues)-3} more..."
+                    else:
+                        issue_summary = "✅ No issues found - code looks good!"
+
+                    reviewer_dev_conv.add_message("assistant", issue_summary)
+
+                    # 🆕 Also add to developer's conversation so dev sees what reviewer said
+                    dev_reviewer_conv = self.dev_agent._get_or_create_conversation("CodeReviewerAgent")
+                    dev_reviewer_conv.add_message("assistant", issue_summary)
+
+                    # 🆕 Record interaction in checkpoint
+                    if checkpoint.retry_count > 0:  # Only track on retries
+                        checkpoint.add_agent_interaction(
+                            "DeveloperAgent",
+                            "CodeReviewerAgent", 
+                            f"Task attempt {checkpoint.retry_count + 1}",
+                            issue_summary
+                        )
+
+                    self.cost_tracker.calculate_and_print_cost(self.model_name)
+
+                    # Force retry if reviewer tool calls failed
+                    if self._detect_reviewer_tool_errors(review_history):
+                        issues = issues or []
+                        issues.append({
+                            "severity": "critical",
+                            "type": "integration_issue",
+                            "file": "N/A",
+                            "line": 0,
+                            "description": "Reviewer tool calls failed; review is invalid.",
+                            "suggestion": "Fix tool call format and re-run review."
+                        })
+
+                    # Enforce no-placeholder policy on modified files
+                    placeholder_issues = self._find_placeholders_in_files(checkpoint.files_modified)
+                    if placeholder_issues:
+                        if issues:
+                            issues.extend(placeholder_issues)
+                        else:
+                            issues = placeholder_issues
+                    # Validate reviewer findings to reduce false positives
+                    issues = self._validate_review_findings(issues, checkpoint.files_modified)
+
+
+                    checkpoint.review_feedback = issues
+                    checkpoint.status = TaskStatus.REVIEWED.value
+                    self._save_checkpoint(checkpoint)
+
+                    if issues and len(issues) > 0:
+                        # ✅ FIX: Check for blocking issues (critical OR major)
+                        blocking_issues = [
+                            i for i in issues 
+                            if i.get("severity") in ["critical", "major"]
+                        ]
+                        
+                        # Separate non-blocking issues (minor, suggestion)
+                        non_blocking_issues = [
+                            i for i in issues
+                            if i.get("severity") not in ["critical", "major"]
+                        ]
+                        
+                        if blocking_issues:
+                            # These MUST be fixed - retry with feedback
+                            print(f"❌ Review found {len(blocking_issues)} blocking issues:")
+                            for issue in blocking_issues:
+                                severity = issue.get('severity', 'unknown').upper()
+                                file = issue.get('file', 'unknown')
+                                line = issue.get('line', 0)
+                                desc = issue.get('description', 'No description')
+                                print(f"  - [{severity}] {file}:{line} - {desc}")
+                            
+                            # Rollback and retry
+                            if savepoint:
+                                print("⚠️ Rolling back changes...")
+                                self._rollback_to_savepoint(savepoint)
+                            
+                            # Build detailed feedback for developer
+                            issue_summary = "🔍 REVIEW FEEDBACK - Issues to fix:\n\n"
+                            for idx, issue in enumerate(blocking_issues, 1):
+                                issue_summary += f"{idx}. [{issue.get('severity', 'unknown').upper()}] "
+                                issue_summary += f"{issue.get('file', 'unknown')}:{issue.get('line', 0)}\n"
+                                issue_summary += f"   Problem: {issue.get('description', 'No description')}\n"
+                                if issue.get('suggestion'):
+                                    issue_summary += f"   Fix: {issue.get('suggestion')}\n"
+                                issue_summary += "\n"
+                            
+                            # Add feedback to developer's conversation for next attempt
+                            try:
+                                dev_reviewer_conv = self.dev_agent._get_or_create_conversation("CodeReviewerAgent")
+                                dev_reviewer_conv.add_message("assistant", issue_summary)
+                            except Exception as e:
+                                print(f"⚠️ Could not add review feedback to conversation: {e}")
+                            
+                            checkpoint.add_retry(
+                                "review_blocking_issues", 
+                                f"{len(blocking_issues)} blocking issues found"
+                            )
+                            self._remember_memory(
+                                content=f"Blocking review issues on task '{task}'. Issues: {issue_summary}",
+                                agent_name="CodeReviewerAgent",
+                                memory_type="event",
+                                tags=["retry", "review_blocking", f"project:{self.project_name}"],
+                                importance=0.8,
+                                store_global=True
+                            )
+                            checkpoint.status = TaskStatus.PENDING.value
+                            self._save_checkpoint(checkpoint)
+                            
+                            print("\n🔄 Retrying task with reviewer feedback...")
+                            continue  # Retry this task
+                        
+                        elif non_blocking_issues:
+                            # Minor/suggestion issues - log but proceed
+                            print(f"⚠️ Review found {len(non_blocking_issues)} non-blocking issues:")
+                            for issue in non_blocking_issues:
+                                severity = issue.get('severity', 'unknown')
+                                file = issue.get('file', 'unknown')
+                                desc = issue.get('description', 'No description')
+                                print(f"  - [{severity}] {file} - {desc}")
+                            print("   (Proceeding as issues are non-blocking)")
+                    else:
+                        print("✅ Review passed - no issues found")
+
+                    # Check for retry loop
+                    if checkpoint.retry_count >= 3:
+                        recent_errors = [r['error_type'] for r in checkpoint.retry_history[-3:]]
+                        
+                        # Same error 3x = stuck in loop
+                        if len(set(recent_errors)) == 1:
+                            print(f"⚠️ STUCK: Same error 3x - {recent_errors[0]}")
+                            
+                            # Get specific issues
+                            if checkpoint.review_feedback:
+                                issues_text = "\n".join([
+                                    f"FIX THIS: {i['file']}:{i['line']} - {i['description']}"
+                                    for i in checkpoint.review_feedback
+                                ])
+                                
+                                # Add explicit fix instructions to task
+                                task = f"""{task}
+
+                    🔴 CRITICAL - PREVIOUS {checkpoint.retry_count} ATTEMPTS FAILED:
+
+                    {issues_text}
+
+                    YOU MUST FIX THESE EXACT ISSUES LISTED ABOVE.
+                    Read the error messages carefully and fix each one.
+                    """
+                    
+                    # --- Testing Phase (if enabled) ---
+                    if self.tester_agent and self.run_tests_enabled:
+                        print(f"\n🧪 Running tests...")
+                        
+                        try:
+                            test_success, test_output = self.tester_agent.run_quality_gate(
+                                self.technical_architecture,
+                                self.logger
+                            )
+                            self.cost_tracker.calculate_and_print_cost(self.model_name)
+                            
+                            checkpoint.test_results = test_output
+                            
+                            if not test_success:
+                                print(f"❌ Tests failed:")
+                                print(test_output)
+                                
+                                # Rollback and retry
+                                if savepoint:
+                                    print("⚠️ Rolling back changes...")
+                                    self._rollback_to_savepoint(savepoint)
+                                
+                                checkpoint.add_retry("test_failure", test_output[:500])
+                                self._remember_memory(
+                                    content=f"Tests failed for task '{task}'. Output: {test_output[:400]}",
+                                    agent_name="TesterAgent",
+                                    memory_type="event",
+                                    tags=["retry", "test_failure", f"project:{self.project_name}"],
+                                    importance=0.7,
+                                    store_global=False
+                                )
+                                checkpoint.status = TaskStatus.PENDING.value
+                                self._save_checkpoint(checkpoint)
+                                continue
+                            
+                            checkpoint.status = TaskStatus.TESTED.value
+                            self._save_checkpoint(checkpoint)
+                            print("✅ Tests passed")
+                        
+                        except Exception as e:
+                            self.logger.log("WARNING", f"Testing failed: {e}")
+                            print(f"⚠️ Testing encountered error: {e}, proceeding anyway...")
+                    
+                    # --- Task Completed Successfully ---
+                    checkpoint.status = TaskStatus.COMPLETED.value
+                    checkpoint.timestamp = datetime.now().isoformat()
+
+                    if checkpoint.retry_count > 0:  # Only print if there were retries
+                        print(f"🧹 Clearing conversation history ({checkpoint.retry_count} retries)")
+                        dev_stats = self.dev_agent.get_stats()
+                        print(f"   Developer: {dev_stats['active_conversations']} conversations, {dev_stats['call_count']} total calls")
+
+                    # Clear conversations for next task
+                    self.dev_agent.clear_conversation("CodeReviewerAgent")
+                    self.dev_agent.clear_conversation("orchestrator")
+                    self.reviewer_agent.clear_conversation("DeveloperAgent")
+                                        
+                    # Commit changes
+                    commit_sha = self._git_commit(f"Complete task {current_task_index + 1}: {task}")
+                    if commit_sha:
+                        checkpoint.git_commit_sha = commit_sha
+                    
+                    self._save_checkpoint(checkpoint)
+
+                    try:
+                        task_summary = (
+                            f"Completed task {current_task_index + 1}: {task}. "
+                            f"Files modified: {', '.join(checkpoint.files_modified[:10])}. "
+                            f"Review summary: {issue_summary}"
+                        )
+                        self._remember_memory(
+                            content=self._truncate_text(task_summary, 1200),
+                            agent_name="DeveloperAgent",
+                            memory_type="event",
+                            tags=["task_complete", f"project:{self.project_name}"],
+                            importance=0.6,
+                        )
+                    except Exception:
+                        pass
+
+                    self.logger.log("INFO", f"Task {current_task_index + 1} completed successfully")
+                    self.metrics_tracker.complete_task(task, success=True, review_passed_on_first_try=(checkpoint.retry_count == 0))
+                    
+                    # Update RAG index
+                    self._update_index_incrementally(checkpoint.files_modified)
+                    
+                    # Update state
+                    self.last_completed_task_index = current_task_index
+                    self._save_state(self.last_completed_task_index)
+                    
+                    # Mark progress as complete
+                    self.progress_tracker.complete_task(success=True)
+                    
+                    current_task_index += 1
+                
+                except Exception as e:
+                    print(f"\n❌ Task failed with error: {e}")
+                    traceback.print_exc()
+                    
+                    # Rollback if savepoint exists
+                    if savepoint:
+                        print("⚠️ Rolling back changes...")
+                        self._rollback_to_savepoint(savepoint)
+                    
+                    checkpoint.add_retry("exception", str(e))
+                    self._remember_memory(
+                        content=f"Task failed with exception for '{task}': {str(e)}",
+                        agent_name="DeveloperAgent",
+                        memory_type="event",
+                        tags=["retry", "exception", f"project:{self.project_name}"],
+                        importance=0.8,
+                        store_global=True
+                    )
+                    checkpoint.status = TaskStatus.PENDING.value
+                    self._save_checkpoint(checkpoint)
+                    
+                    self.progress_tracker.complete_task(success=False)
+                    
+                    # Don't increment - retry same task
+            
+            failed_or_blocked = [
+                cp for cp in self.task_checkpoints.values()
+                if cp.status in {
+                    TaskStatus.FAILED.value,
+                    TaskStatus.BLOCKED.value,
+                    TaskStatus.SKIPPED.value,
+                    TaskStatus.PENDING.value,
+                    TaskStatus.IN_PROGRESS.value,
+                }
+            ]
+            project_completed_successfully = (
+                len(failed_or_blocked) == 0
+                and self.last_completed_task_index >= len(self.plan) - 1
+            )
+            if project_completed_successfully:
+                print("\n✅ All tasks completed successfully!")
+            else:
+                print("\n⚠️ Development loop finished with failed/skipped tasks.")
+        
+        except Exception as e:
+            self.logger.log("ERROR", f"Fatal error in orchestration: {e}")
+            traceback.print_exc()
+            print(f"\n❌ Orchestration failed: {e}")
+        
+        finally:
+            # --- Finalization Phase ---
+            self.logger.log_phase("Finalization")
+            print("\n=== 🏁 Finalization ===")
+            
+            if project_completed_successfully:
+                # Generate documentation
+                print("\n📚 Generating documentation...")
+                try:
+                    project_structure = self._get_project_structure_string()
+                    requirements_txt = clarified_prompt if 'clarified_prompt' in locals() else self.user_prompt
+                    
+                    readme_content = self.doc_agent.write_documentation(
+                        self.project_name,
+                        project_structure,
+                        self.run_command,
+                        requirements_txt,
+                        self.logger
+                    )
+                    
+                    # Save README
+                    readme_path = os.path.join(self.project_dir, "README.md")
+                    with open(readme_path, 'w', encoding='utf-8') as f:
+                        f.write(readme_content)
+                    self.files["README.md"] = readme_content
+                    
+                    print("✅ Documentation generated")
+                    
+                except Exception as e:
+                    print(f"❌ Documentation generation failed: {e}")
+            
+            # Print summary
+            print("\n" + "="*60)
+            print("PROJECT SUMMARY")
+            print("="*60)
+            print(f"Project: {self.project_name}")
+            completed_count = sum(
+                1 for cp in self.task_checkpoints.values()
+                if cp.status == TaskStatus.COMPLETED.value
+            )
+            print(f"Tasks completed: {completed_count}/{len(self.plan)}")
+            print(f"Status: {'✅ SUCCESS' if project_completed_successfully else '❌ INCOMPLETE'}")
+
+            # 🆕 Print agent statistics
+            print(f"\n📊 AGENT STATISTICS:")
+            agents = [
+                ("Developer", self.dev_agent),
+                ("Code Reviewer", self.reviewer_agent),
+                ("Architect", self.architect_agent),
+                ("Requirements", self.requirements_agent),
+            ]
+
+            for agent_name, agent in agents:
+                if agent:  # Some agents might be None
+                    stats = agent.get_stats()
+                    print(f"\n  {agent_name}:")
+                    print(f"    Total Calls: {stats['call_count']}")
+                    print(f"    Errors: {stats['error_count']} ({stats['error_rate']:.1%})")
+                    print(f"    Conversations: {stats['active_conversations']}")
+
+            # 🆕 Print retry statistics from checkpoints
+            total_retries = sum(cp.retry_count for cp in self.task_checkpoints.values())
+            tasks_with_retries = sum(1 for cp in self.task_checkpoints.values() if cp.retry_count > 0)
+            if tasks_with_retries > 0:
+                print(f"\n  Retry Statistics:")
+                print(f"    Total Retries: {total_retries}")
+                print(f"    Tasks with Retries: {tasks_with_retries}/{len(self.task_checkpoints)}")
+                print(f"    Average Retries: {total_retries/len(self.task_checkpoints):.1f}")
+
+            # Print cost summary
+            cost_summary = self.cost_tracker.get_summary()
+            print(f"\n{cost_summary}")
+
+            # Print metrics summary
+            metrics_summary = self.metrics_tracker.get_summary()
+            print(f"\n{metrics_summary}")
+
+            # Write logs
+            self.logger.log_final_summary(cost_summary, metrics_summary)
+            self.logger.write_to_file()
+
+            print("="*60)
+    
+    def _create_simple_plan(self, architecture: Dict) -> List[str]:
+        """
+        Create a simple task plan from architecture.
+        Fallback when SADT planner is not available.
+        
+        Args:
+            architecture: Architecture dict from SoftwareArchitectAgent
+        
+        Returns:
+            List of task strings
+        """
+        plan = []
+        
+        file_structure = architecture.get("file_structure", [])
+        component_breakdown = architecture.get("component_breakdown", {})
+        
+        # Task 1: Setup project structure
+        plan.append("Create project directory structure and configuration files")
+        
+        # Task 2-N: Create each file
+        for filepath in file_structure:
+            if filepath in component_breakdown:
+                purpose = component_breakdown[filepath]
+                plan.append(f"Create {filepath}: {purpose}")
+            else:
+                plan.append(f"Create {filepath}")
+        
+        # Final task: Integration
+        plan.append("Integrate all components and verify application runs")
+        
+        return plan
+
+
+# ==================== ENTRY POINT ====================
+
+if __name__ == "__main__":
+    import sys
+    
+    try:
+        project_name = sys.argv[1]
+    except IndexError:
+        print("Error: Missing project name.")
+        print("Usage: python orchestrator.py <project_name> [--prompt <file>] [--new] [--google] [--with-tests] [--planning-model <name>] [--execution-model <name>]")
+        sys.exit(1)
+    
+    initial_prompt_file = None
+    if "--prompt" in sys.argv:
+        try:
+            initial_prompt_file = sys.argv[sys.argv.index("--prompt") + 1]
+        except IndexError:
+            print("Error: --prompt flag requires a filename.")
+            sys.exit(1)
+    
+    provider = "ollama"  # default
+    if "--google" in sys.argv:
+        provider = "google"
+    
+    force_new = "--new" in sys.argv
+    run_tests = "--with-tests" in sys.argv
+    
+    planning_model = None
+    execution_model = None
+    if "--planning-model" in sys.argv:
+        try:
+            planning_model = sys.argv[sys.argv.index("--planning-model") + 1]
+        except IndexError:
+            print("Error: --planning-model flag requires a model name.")
+            sys.exit(1)
+    if "--execution-model" in sys.argv:
+        try:
+            execution_model = sys.argv[sys.argv.index("--execution-model") + 1]
+        except IndexError:
+            print("Error: --execution-model flag requires a model name.")
+            sys.exit(1)
+
+    orchestrator = Orchestrator(
+        project_name,
+        initial_prompt_file,
+        provider=provider,
+        force_new=force_new,
+        run_tests=run_tests,
+        planning_model=planning_model,
+        execution_model=execution_model
+    )
+    
+    asyncio.run(orchestrator.run())

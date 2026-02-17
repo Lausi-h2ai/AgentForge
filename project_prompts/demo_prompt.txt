@@ -1,0 +1,3 @@
+﻿# Demo prompt
+Build a tiny FastAPI app with one endpoint GET /health that returns {"status":"ok"}.
+Add a README with setup instructions.

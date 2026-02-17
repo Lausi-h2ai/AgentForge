@@ -1,0 +1,2614 @@
+# Smart Pantry & Recipe App - COMPLETE SPECIFICATION
+# Ollama/Local LLM Optimized - Production-Ready
+
+## Project Overview
+Build a single-user MVP app for pantry management with receipt OCR parsing and AI recipe generation using **local Ollama models** (no OpenAI API required). Use Python/FastAPI backend, React frontend, PostgreSQL database.
+
+**Key Design Decisions:**
+- Use Ollama for all LLM tasks (recipe generation, receipt parsing)
+- Start with simple regex parsing, enhance with LLM later
+- Mock OCR initially, add real OCR as enhancement
+- Focus on working end-to-end flow before optimization
+
+---
+
+## 🎯 EXACT User Experience Definitions
+
+### Feature 1: Pantry Management
+
+**User Flow - View Pantry:**
+1. User lands on Pantry page (/pantry)
+2. System fetches pantry items via GET /api/pantry
+3. Display items in responsive grid (3 cols desktop, 2 tablet, 1 mobile)
+4. Each card shows:
+   - Ingredient name (bold, 18px)
+   - Quantity + unit (gray, 14px)
+   - Category badge (colored pill based on category)
+   - Edit button (blue pencil icon, top-right)
+   - Delete button (red trash icon, top-right)
+5. If pantry empty: Show empty state with "Add your first item" button
+6. Loading: Show skeleton cards (3 pulsing gray rectangles)
+7. Error: Show red banner at top with "Failed to load pantry. Retry?"
+
+**User Flow - Add Item:**
+1. User clicks "+" FAB (floating action button, bottom-right, blue, 56px)
+2. Modal slides up from bottom (300ms ease-out)
+3. Modal shows form with fields:
+   - Ingredient name (autocomplete enabled, shows suggestions after 2 chars)
+   - Quantity (number input, step 0.1, min 0.01)
+   - Unit (dropdown: units, grams, kg, liters, ml)
+4. As user types ingredient name:
+   - After 2 characters, call GET /api/ingredients/search?q={query}
+   - Show dropdown with top 5 matches
+   - Each suggestion shows name + category badge
+   - Click suggestion to autofill
+5. Validation (real-time, on blur):
+   - Ingredient name: required, show red border + "Required" below
+   - Quantity: must be > 0, show red border + "Must be positive"
+6. Click "Add Item" button:
+   - Disable button, show spinner inside button
+   - Call POST /api/pantry with data
+   - On success (201):
+     * Close modal (slide down, 300ms)
+     * Refresh pantry grid
+     * Show green toast (top-right): "Item added successfully!"
+     * Toast auto-dismisses after 3 seconds
+   - On error (400 validation):
+     * Keep modal open
+     * Highlight invalid fields with red borders
+     * Show error messages below fields
+     * Show red toast: "Please fix errors"
+   - On error (500 server):
+     * Keep modal open
+     * Show red toast: "Server error. Please try again."
+7. Click "Cancel" or backdrop: Close modal without saving
+
+**User Flow - Edit Item:**
+1. User clicks pencil icon on item card
+2. Modal opens with pre-filled values
+3. Same validation as Add
+4. On save: Call PATCH /api/pantry/{id}
+5. Success: Update card in place (no full refresh), show "Item updated!" toast
+6. Error: Same handling as Add
+
+**User Flow - Delete Item:**
+1. User clicks trash icon
+2. Show confirmation dialog (centered overlay):
+   - Title: "Delete [item name]?"
+   - Text: "This action cannot be undone."
+   - Two buttons: "Cancel" (gray) | "Delete" (red)
+3. Click Delete:
+   - Call DELETE /api/pantry/{id}
+   - On success (200):
+     * Fade out card (500ms)
+     * Remove from grid
+     * Show "Item deleted" toast
+   - On error: Show error toast, keep card
+
+### Feature 2: Recipe Generation
+
+**User Flow - Generate Recipe:**
+1. User navigates to Planner page (/planner)
+2. Page shows:
+   - Header: "Generate Recipe from Your Pantry"
+   - Preference form (optional filters):
+     * Cuisine dropdown (any, Italian, Chinese, Mexican, etc.)
+     * Max time slider (15-120 min, default 60)
+     * Difficulty radio (easy/medium/hard)
+     * "Avoid ingredients" multi-select chips
+   - "Generate Recipe" button (large, primary blue, center)
+   - Previous recipes section (scrollable cards)
+3. Click "Generate Recipe":
+   - Disable button, change text to "Generating..." with spinner
+   - Call POST /api/recipes/generate with preferences
+   - Show loading state: Animated cooking pot icon with "Creating your recipe..."
+   - Request typically takes 5-15 seconds
+4. On success (201):
+   - Hide loading state
+   - Display recipe card (full width):
+     * Title (24px, bold)
+     * Meta info row: cuisine badge, time icon + minutes, difficulty
+     * Ingredients section (collapsible, default open):
+       - Bullet list with checkboxes (non-functional, visual only)
+       - Each ingredient on own line
+     * Instructions section (collapsible, default open):
+       - Numbered list
+       - Each step on own line
+     * Action buttons row:
+       - "Cook This" (primary button) → saves to history
+       - "Regenerate" (secondary) → generates new recipe
+       - "Save" (outline) → bookmarks recipe
+5. On error:
+   - Hide loading
+   - Show error message: "Failed to generate recipe. [reason]"
+   - Show "Try Again" button
+
+**User Flow - Record Cooked Meal:**
+1. User clicks "Cook This" on recipe card
+2. Show modal: "Mark as Cooked?"
+   - Date picker (default: today)
+   - Rating stars (1-5, optional)
+   - Notes textarea (optional)
+   - "Save" | "Cancel"
+3. Click Save:
+   - Call POST /api/meals/history
+   - Success: Show "Meal recorded!" toast, return to planner
+   - Error: Show error toast
+
+### Feature 3: Receipt Upload
+
+**User Flow - Upload Receipt:**
+1. User navigates to Receipts page (/receipts)
+2. Page shows:
+   - Upload zone (dashed border, centered):
+     * "Drag & drop receipt or click to browse"
+     * Accepted: images (jpg, png), text files
+   - Previously uploaded receipts list below
+3. User drops file or clicks to browse:
+   - Show file name + size
+   - Show "Upload" button (enabled)
+4. Click "Upload":
+   - Disable button, show progress bar (0-100%)
+   - Call POST /api/receipts/upload (multipart/form-data)
+   - On success (200):
+     * Hide upload UI
+     * Show receipt card with:
+       - Filename
+       - Upload date
+       - "Parse Receipt" button (primary)
+       - "View Raw" button (secondary)
+5. Click "Parse Receipt":
+   - Show parsing options dialog:
+     * Radio: "Quick Parse (regex)" | "AI Parse (Ollama)"
+     * Checkbox: "Add to pantry automatically"
+     * "Parse" | "Cancel"
+6. Click Parse:
+   - Show loading: "Parsing receipt..."
+   - Call POST /api/receipts/{id}/parse?use_llm=true/false
+   - On success:
+     * Display parsed items in table:
+       - Columns: Item | Quantity | Unit | Confidence
+       - Each row has checkbox (checked by default)
+       - Edit icons to adjust quantity/unit
+     * Show "Add Selected to Pantry" button
+7. Click "Add Selected to Pantry":
+   - Call POST /api/receipts/{id}/apply-to-pantry
+   - Success: Show "{N} items added to pantry" toast
+   - Navigate to pantry page to show results
+
+---
+
+## 🔌 COMPLETE API Specifications
+
+### Pantry Endpoints
+
+**1. GET /api/pantry**
+
+Query Parameters:
+- `user_id` (optional, default=1): User ID
+
+Response (200 OK):
+```json
+{
+  "items": [
+    {
+      "id": 1,
+      "ingredient_name": "Milk 3.5%",
+      "quantity": 2.0,
+      "unit": "liters",
+      "category": "Dairy",
+      "updated_at": "2026-01-28T10:30:00Z"
+    }
+  ],
+  "total": 15
+}
+```
+
+Error (500 Internal Server Error):
+```json
+{
+  "error": "DatabaseError",
+  "message": "Failed to fetch pantry items",
+  "details": "Connection timeout"
+}
+```
+
+**2. POST /api/pantry**
+
+Request Headers:
+- Content-Type: application/json
+
+Request Body:
+```json
+{
+  "ingredient_name": "string (required, 1-200 chars)",
+  "quantity": "number (required, > 0)",
+  "unit": "string (required, enum: units|grams|kg|liters|ml)"
+}
+```
+
+Response (201 Created):
+```json
+{
+  "message": "Item added",
+  "id": 42,
+  "ingredient": {
+    "id": 15,
+    "name": "Milk 3.5%",
+    "normalized_name": "milk",
+    "category": "Dairy"
+  }
+}
+```
+
+Response (200 OK) - when item already exists:
+```json
+{
+  "message": "Quantity updated",
+  "id": 42,
+  "previous_quantity": 2.0,
+  "new_quantity": 4.0
+}
+```
+
+Error (400 Bad Request):
+```json
+{
+  "error": "ValidationError",
+  "message": "Invalid input",
+  "fields": {
+    "ingredient_name": "Field is required",
+    "quantity": "Must be positive number"
+  }
+}
+```
+
+Error (422 Unprocessable Entity):
+```json
+{
+  "error": "ValidationError",
+  "message": "Invalid unit",
+  "fields": {
+    "unit": "Must be one of: units, grams, kg, liters, ml"
+  }
+}
+```
+
+**3. PATCH /api/pantry/{item_id}**
+
+Request Body:
+```json
+{
+  "quantity": "number (required, > 0)",
+  "unit": "string (required)"
+}
+```
+
+Response (200 OK):
+```json
+{
+  "message": "Item updated",
+  "id": 42,
+  "updated_fields": ["quantity", "unit"]
+}
+```
+
+Error (404 Not Found):
+```json
+{
+  "error": "NotFound",
+  "message": "Pantry item with id 42 not found"
+}
+```
+
+**4. DELETE /api/pantry/{item_id}**
+
+Response (200 OK):
+```json
+{
+  "message": "Item deleted",
+  "id": 42
+}
+```
+
+Error (404 Not Found):
+```json
+{
+  "error": "NotFound",
+  "message": "Pantry item with id 42 not found"
+}
+```
+
+**5. GET /api/ingredients/search**
+
+Query Parameters:
+- `q` (required, min_length=1): Search query
+
+Response (200 OK):
+```json
+{
+  "results": [
+    {
+      "id": 15,
+      "name": "Milk 3.5%",
+      "normalized_name": "milk",
+      "category": "Dairy",
+      "default_unit": "liters",
+      "confidence": 95.5
+    }
+  ],
+  "query": "mil",
+  "total": 3
+}
+```
+
+### Recipe Endpoints
+
+**1. GET /api/recipes**
+
+Query Parameters:
+- `limit` (optional, default=20, max=100): Number of recipes
+- `cuisine` (optional): Filter by cuisine
+- `source` (optional): Filter by source (generated/manual/imported)
+
+Response (200 OK):
+```json
+{
+  "recipes": [
+    {
+      "id": 1,
+      "title": "Creamy Pasta Carbonara",
+      "ingredients": [
+        "400g pasta",
+        "200g bacon",
+        "3 eggs",
+        "100g parmesan cheese"
+      ],
+      "instructions": [
+        "Boil pasta according to package",
+        "Fry bacon until crispy",
+        "Mix eggs and cheese",
+        "Combine all ingredients"
+      ],
+      "cuisine": "Italian",
+      "time_minutes": 30,
+      "difficulty": "medium",
+      "tags": ["pasta", "quick", "comfort-food"],
+      "created_at": "2026-01-28T10:00:00Z"
+    }
+  ],
+  "total": 47,
+  "page": 1,
+  "pages": 3
+}
+```
+
+**2. POST /api/recipes/generate**
+
+Request Body:
+```json
+{
+  "cuisine": "string (optional, e.g., 'Italian')",
+  "time_minutes": "integer (optional, default=60, range: 15-180)",
+  "difficulty": "string (optional, enum: easy|medium|hard)",
+  "avoid_ingredients": ["string array (optional)"]
+}
+```
+
+Response (201 Created):
+```json
+{
+  "id": 42,
+  "title": "Quick Tomato Pasta",
+  "ingredients": [
+    "300g pasta",
+    "400g canned tomatoes",
+    "2 cloves garlic",
+    "2 tbsp olive oil",
+    "Fresh basil",
+    "Salt and pepper"
+  ],
+  "instructions": [
+    "Boil pasta in salted water for 8-10 minutes",
+    "Heat olive oil, sauté minced garlic for 1 minute",
+    "Add canned tomatoes, simmer for 10 minutes",
+    "Season with salt, pepper, and fresh basil",
+    "Toss cooked pasta with sauce",
+    "Serve immediately with parmesan"
+  ],
+  "cuisine": "Italian",
+  "time_minutes": 25,
+  "difficulty": "easy",
+  "tags": ["pasta", "quick", "vegetarian"],
+  "generation_context": {
+    "pantry_items_used": 8,
+    "diversity_score": 0.75,
+    "model": "gemma2:2b"
+  }
+}
+```
+
+Error (400 Bad Request):
+```json
+{
+  "error": "ValidationError",
+  "message": "Invalid difficulty level",
+  "fields": {
+    "difficulty": "Must be one of: easy, medium, hard"
+  }
+}
+```
+
+Error (503 Service Unavailable):
+```json
+{
+  "error": "OllamaUnavailable",
+  "message": "Cannot connect to Ollama service",
+  "details": "Ensure Ollama is running: ollama serve",
+  "retry_after": 30
+}
+```
+
+### Receipt Endpoints
+
+**1. POST /api/receipts/upload**
+
+Request Headers:
+- Content-Type: multipart/form-data
+
+Request Body (form-data):
+- `file`: File (required, max size: 10MB, types: image/*, text/plain)
+
+Response (201 Created):
+```json
+{
+  "id": 15,
+  "filename": "receipt_uuid.jpg",
+  "file_path": "/data/receipts/receipt_uuid.jpg",
+  "size_bytes": 245678,
+  "uploaded_at": "2026-01-28T11:00:00Z",
+  "processed": false
+}
+```
+
+Error (400 Bad Request):
+```json
+{
+  "error": "InvalidFile",
+  "message": "File type not supported",
+  "supported_types": ["image/jpeg", "image/png", "text/plain"]
+}
+```
+
+Error (413 Payload Too Large):
+```json
+{
+  "error": "FileTooLarge",
+  "message": "File size exceeds 10MB limit",
+  "size_bytes": 15728640,
+  "max_bytes": 10485760
+}
+```
+
+**2. POST /api/receipts/{receipt_id}/parse**
+
+Query Parameters:
+- `use_llm` (optional, default=false): Use Ollama for parsing
+
+Response (200 OK):
+```json
+{
+  "items": [
+    {
+      "name": "Radishes",
+      "quantity": 1.0,
+      "unit": "unit",
+      "confidence": 0.85,
+      "price": 0.59
+    },
+    {
+      "name": "Cheese",
+      "quantity": 1.0,
+      "unit": "unit",
+      "confidence": 0.90,
+      "price": 1.39
+    }
+  ],
+  "total": 8.84,
+  "store": "EDEKA Schweinfurt",
+  "date": "2024-12-08",
+  "parsing_method": "llm",
+  "parse_time_seconds": 3.5
+}
+```
+
+Error (404 Not Found):
+```json
+{
+  "error": "NotFound",
+  "message": "Receipt with id 15 not found"
+}
+```
+
+Error (500 Internal Server Error):
+```json
+{
+  "error": "ParsingFailed",
+  "message": "Failed to parse receipt",
+  "details": "OCR extraction returned empty text"
+}
+```
+
+**3. POST /api/receipts/{receipt_id}/apply-to-pantry**
+
+Response (200 OK):
+```json
+{
+  "message": "Added 5 items to pantry",
+  "total_parsed": 7,
+  "added": 5,
+  "skipped": 2,
+  "skipped_items": ["Cigarettes", "Unknown Item"],
+  "pantry_items_created": [12, 13, 14, 15, 16]
+}
+```
+
+### Meal History Endpoints
+
+**1. GET /api/meals/history**
+
+Query Parameters:
+- `limit` (optional, default=50, max=200)
+- `user_id` (optional, default=1)
+
+Response (200 OK):
+```json
+{
+  "meals": [
+    {
+      "id": 42,
+      "recipe_id": 15,
+      "recipe_title": "Creamy Pasta Carbonara",
+      "cooked_date": "2026-01-27T19:30:00Z",
+      "rating": 5,
+      "notes": "Delicious! Added extra pepper."
+    }
+  ],
+  "total": 128
+}
+```
+
+**2. POST /api/meals/history**
+
+Request Body:
+```json
+{
+  "recipe_id": "integer (required)",
+  "rating": "integer (optional, range: 1-5)",
+  "notes": "string (optional, max 1000 chars)",
+  "cooked_date": "ISO 8601 string (optional, default: now)"
+}
+```
+
+Response (201 Created):
+```json
+{
+  "message": "Meal recorded",
+  "id": 43,
+  "pantry_updated": true,
+  "ingredients_consumed": 8
+}
+```
+
+**3. GET /api/meals/diversity-summary**
+
+Query Parameters:
+- `days` (optional, default=14): Days to look back
+
+Response (200 OK):
+```json
+{
+  "recent_ingredients": [
+    "pasta",
+    "tomatoes",
+    "garlic",
+    "olive oil",
+    "chicken breast"
+  ],
+  "recent_cuisines": [
+    "Italian",
+    "Chinese",
+    "Mexican"
+  ],
+  "total_meals": 12,
+  "unique_recipes": 10,
+  "repeat_rate": 0.17,
+  "diversity_score": 0.83,
+  "recommendations": [
+    "Try Indian cuisine - not cooked recently",
+    "Avoid pasta - cooked 3 times this week"
+  ]
+}
+```
+
+### Implementation Requirements for ALL Endpoints:
+
+☐ Use parameterized queries (NO SQL string concatenation)
+☐ Validate ALL inputs before database operations
+☐ Return appropriate HTTP status codes (200, 201, 400, 404, 422, 500, 503)
+☐ Log all operations with timestamp, user_id, and action
+☐ Handle errors gracefully with try/catch blocks
+☐ Include CORS headers for frontend
+☐ Set response timeout to 30 seconds
+☐ Return JSON only (no HTML error pages)
+☐ Use consistent error format across all endpoints
+☐ Add request ID to all responses for debugging
+
+---
+
+## 🗄️ COMPLETE Database Schema
+
+```sql
+-- Enable UUID extension
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- Users table (MVP: single user, but schema supports multi-user)
+CREATE TABLE users (
+    id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    username VARCHAR(100) UNIQUE NOT NULL,
+    email VARCHAR(255) UNIQUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Index for username lookups
+CREATE INDEX idx_users_username ON users(username);
+
+-- Ingredient catalog with normalization
+CREATE TABLE ingredients (
+    id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    name VARCHAR(200) NOT NULL,
+    normalized_name VARCHAR(200) NOT NULL,
+    category VARCHAR(50) NOT NULL DEFAULT 'Other',
+    default_unit VARCHAR(20) NOT NULL DEFAULT 'unit',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
+    -- Constraints
+    CONSTRAINT unique_normalized_name UNIQUE(normalized_name),
+    CONSTRAINT valid_category CHECK (
+        category IN ('Dairy', 'Meat', 'Produce', 'Bakery', 'Pantry', 'Spices', 'Other')
+    )
+);
+
+-- Indexes for ingredient search
+CREATE INDEX idx_ingredients_name ON ingredients(name);
+CREATE INDEX idx_ingredients_normalized ON ingredients(normalized_name);
+CREATE INDEX idx_ingredients_category ON ingredients(category);
+-- Full-text search index
+CREATE INDEX idx_ingredients_search ON ingredients 
+    USING gin(to_tsvector('english', name || ' ' || normalized_name));
+
+-- User's pantry inventory
+CREATE TABLE pantry_items (
+    id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    ingredient_id INTEGER NOT NULL REFERENCES ingredients(id) ON DELETE RESTRICT,
+    quantity DECIMAL(10,2) NOT NULL CHECK (quantity > 0),
+    unit VARCHAR(20) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
+    -- Constraints
+    CONSTRAINT unique_user_ingredient UNIQUE(user_id, ingredient_id),
+    CONSTRAINT positive_quantity CHECK (quantity > 0)
+);
+
+-- Indexes for pantry queries
+CREATE INDEX idx_pantry_user ON pantry_items(user_id);
+CREATE INDEX idx_pantry_ingredient ON pantry_items(ingredient_id);
+CREATE INDEX idx_pantry_updated ON pantry_items(updated_at DESC);
+
+-- Recipes (manual or AI-generated)
+CREATE TABLE recipes (
+    id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    title VARCHAR(200) NOT NULL,
+    ingredients_json TEXT NOT NULL DEFAULT '[]',
+    instructions_json TEXT NOT NULL DEFAULT '[]',
+    source VARCHAR(20) NOT NULL DEFAULT 'generated',
+    cuisine VARCHAR(50),
+    time_minutes INTEGER,
+    difficulty VARCHAR(20),
+    tags_json TEXT NOT NULL DEFAULT '[]',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    created_by_user_id INTEGER REFERENCES users(id),
+
+    -- Constraints
+    CONSTRAINT valid_source CHECK (source IN ('generated', 'manual', 'imported')),
+    CONSTRAINT valid_difficulty CHECK (difficulty IS NULL OR difficulty IN ('easy', 'medium', 'hard')),
+    CONSTRAINT positive_time CHECK (time_minutes IS NULL OR time_minutes > 0)
+);
+
+-- Indexes for recipe search
+CREATE INDEX idx_recipes_cuisine ON recipes(cuisine);
+CREATE INDEX idx_recipes_difficulty ON recipes(difficulty);
+CREATE INDEX idx_recipes_time ON recipes(time_minutes);
+CREATE INDEX idx_recipes_created ON recipes(created_at DESC);
+-- Full-text search on title
+CREATE INDEX idx_recipes_title_search ON recipes USING gin(to_tsvector('english', title));
+
+-- Meal history (tracking cooked meals)
+CREATE TABLE meal_history (
+    id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+    cooked_date TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    rating INTEGER CHECK (rating IS NULL OR (rating >= 1 AND rating <= 5)),
+    notes TEXT,
+
+    -- Constraints
+    CONSTRAINT valid_rating CHECK (rating IS NULL OR (rating BETWEEN 1 AND 5))
+);
+
+-- Indexes for history queries
+CREATE INDEX idx_history_user ON meal_history(user_id);
+CREATE INDEX idx_history_recipe ON meal_history(recipe_id);
+CREATE INDEX idx_history_date ON meal_history(cooked_date DESC);
+CREATE INDEX idx_history_user_date ON meal_history(user_id, cooked_date DESC);
+
+-- Receipt records
+CREATE TABLE receipts (
+    id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    file_path VARCHAR(500) NOT NULL,
+    filename VARCHAR(255) NOT NULL,
+    size_bytes INTEGER,
+    raw_text TEXT DEFAULT '',
+    parsed_data_json TEXT,
+    processed BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    processed_at TIMESTAMP WITH TIME ZONE
+);
+
+-- Indexes for receipt queries
+CREATE INDEX idx_receipts_user ON receipts(user_id);
+CREATE INDEX idx_receipts_processed ON receipts(processed);
+CREATE INDEX idx_receipts_created ON receipts(created_at DESC);
+
+-- Trigger function to update updated_at timestamp
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Apply trigger to pantry_items
+CREATE TRIGGER pantry_items_updated_at
+    BEFORE UPDATE ON pantry_items
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- Apply trigger to users
+CREATE TRIGGER users_updated_at
+    BEFORE UPDATE ON users
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- Seed default user
+INSERT INTO users (id, username, email) 
+VALUES (1, 'default_user', 'user@smartpantry.local')
+ON CONFLICT (username) DO NOTHING;
+
+-- Reset user ID sequence to start from 2
+SELECT setval('users_id_seq', 1, true);
+
+-- Sample ingredient data (will be expanded by seed script)
+INSERT INTO ingredients (name, normalized_name, category, default_unit) VALUES
+    ('Milk 3.5%', 'milk', 'Dairy', 'liters'),
+    ('Eggs', 'egg', 'Dairy', 'units'),
+    ('Butter', 'butter', 'Dairy', 'grams'),
+    ('Cheddar Cheese', 'cheddar cheese', 'Dairy', 'grams'),
+    ('Chicken Breast', 'chicken breast', 'Meat', 'kilograms'),
+    ('Ground Beef', 'ground beef', 'Meat', 'kilograms'),
+    ('Bacon', 'bacon', 'Meat', 'grams'),
+    ('Tomatoes', 'tomato', 'Produce', 'kilograms'),
+    ('Onions', 'onion', 'Produce', 'kilograms'),
+    ('Garlic', 'garlic', 'Produce', 'units'),
+    ('Potatoes', 'potato', 'Produce', 'kilograms'),
+    ('Carrots', 'carrot', 'Produce', 'kilograms'),
+    ('Lettuce', 'lettuce', 'Produce', 'units'),
+    ('Bread', 'bread', 'Bakery', 'units'),
+    ('Flour', 'flour', 'Pantry', 'kilograms'),
+    ('Sugar', 'sugar', 'Pantry', 'kilograms'),
+    ('Salt', 'salt', 'Spices', 'grams'),
+    ('Pepper', 'pepper', 'Spices', 'grams'),
+    ('Olive Oil', 'olive oil', 'Pantry', 'liters'),
+    ('Rice', 'rice', 'Pantry', 'kilograms')
+ON CONFLICT (normalized_name) DO NOTHING;
+```
+
+---
+
+## 🎨 COMPLETE Design System
+
+### Color Palette
+
+```css
+:root {
+  /* Primary Brand Colors */
+  --color-primary: #3b82f6;        /* Blue 500 */
+  --color-primary-hover: #2563eb;  /* Blue 600 */
+  --color-primary-light: #dbeafe;  /* Blue 100 */
+  --color-primary-dark: #1e40af;   /* Blue 800 */
+
+  /* Secondary Colors */
+  --color-secondary: #8b5cf6;      /* Purple 500 */
+  --color-secondary-hover: #7c3aed; /* Purple 600 */
+
+  /* Semantic Colors */
+  --color-success: #10b981;         /* Green 500 */
+  --color-success-light: #d1fae5;   /* Green 100 */
+  --color-warning: #f59e0b;         /* Amber 500 */
+  --color-warning-light: #fef3c7;   /* Amber 100 */
+  --color-danger: #ef4444;          /* Red 500 */
+  --color-danger-light: #fee2e2;    /* Red 100 */
+  --color-info: #06b6d4;            /* Cyan 500 */
+  --color-info-light: #cffafe;      /* Cyan 100 */
+
+  /* Neutral Colors */
+  --color-white: #ffffff;
+  --color-gray-50: #f9fafb;
+  --color-gray-100: #f3f4f6;
+  --color-gray-200: #e5e7eb;
+  --color-gray-300: #d1d5db;
+  --color-gray-400: #9ca3af;
+  --color-gray-500: #6b7280;
+  --color-gray-600: #4b5563;
+  --color-gray-700: #374151;
+  --color-gray-800: #1f2937;
+  --color-gray-900: #111827;
+
+  /* Category Colors */
+  --color-category-dairy: #fbbf24;      /* Amber 400 */
+  --color-category-meat: #ef4444;       /* Red 500 */
+  --color-category-produce: #10b981;    /* Green 500 */
+  --color-category-bakery: #f97316;     /* Orange 500 */
+  --color-category-pantry: #8b5cf6;     /* Purple 500 */
+  --color-category-spices: #ec4899;     /* Pink 500 */
+  --color-category-other: #6b7280;      /* Gray 500 */
+
+  /* Typography */
+  --font-family-base: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 
+                      Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-family-mono: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+
+  --font-size-xs: 0.75rem;      /* 12px */
+  --font-size-sm: 0.875rem;     /* 14px */
+  --font-size-base: 1rem;       /* 16px */
+  --font-size-lg: 1.125rem;     /* 18px */
+  --font-size-xl: 1.25rem;      /* 20px */
+  --font-size-2xl: 1.5rem;      /* 24px */
+  --font-size-3xl: 1.875rem;    /* 30px */
+  --font-size-4xl: 2.25rem;     /* 36px */
+
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  --line-height-tight: 1.25;
+  --line-height-normal: 1.5;
+  --line-height-relaxed: 1.75;
+
+  /* Spacing */
+  --spacing-xs: 0.25rem;    /* 4px */
+  --spacing-sm: 0.5rem;     /* 8px */
+  --spacing-md: 1rem;       /* 16px */
+  --spacing-lg: 1.5rem;     /* 24px */
+  --spacing-xl: 2rem;       /* 32px */
+  --spacing-2xl: 3rem;      /* 48px */
+  --spacing-3xl: 4rem;      /* 64px */
+
+  /* Border Radius */
+  --radius-sm: 0.25rem;     /* 4px */
+  --radius-md: 0.5rem;      /* 8px */
+  --radius-lg: 0.75rem;     /* 12px */
+  --radius-xl: 1rem;        /* 16px */
+  --radius-full: 9999px;    /* Fully rounded */
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 
+               0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 
+               0 4px 6px -4px rgb(0 0 0 / 0.1);
+  --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 
+               0 8px 10px -6px rgb(0 0 0 / 0.1);
+  --shadow-2xl: 0 25px 50px -12px rgb(0 0 0 / 0.25);
+
+  /* Transitions */
+  --transition-fast: 150ms ease-in-out;
+  --transition-base: 200ms ease-in-out;
+  --transition-slow: 300ms ease-in-out;
+
+  /* Z-index layers */
+  --z-dropdown: 1000;
+  --z-sticky: 1020;
+  --z-fixed: 1030;
+  --z-modal-backdrop: 1040;
+  --z-modal: 1050;
+  --z-popover: 1060;
+  --z-tooltip: 1070;
+}
+```
+
+### Component Styles
+
+```css
+/* Reset and Base Styles */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-family-base);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-normal);
+  color: var(--color-gray-900);
+  background-color: var(--color-gray-50);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Typography */
+h1, h2, h3, h4, h5, h6 {
+  font-weight: var(--font-weight-bold);
+  line-height: var(--line-height-tight);
+  color: var(--color-gray-900);
+}
+
+h1 { font-size: var(--font-size-4xl); margin-bottom: var(--spacing-lg); }
+h2 { font-size: var(--font-size-3xl); margin-bottom: var(--spacing-md); }
+h3 { font-size: var(--font-size-2xl); margin-bottom: var(--spacing-md); }
+h4 { font-size: var(--font-size-xl); margin-bottom: var(--spacing-sm); }
+h5 { font-size: var(--font-size-lg); margin-bottom: var(--spacing-sm); }
+h6 { font-size: var(--font-size-base); margin-bottom: var(--spacing-sm); }
+
+p {
+  margin-bottom: var(--spacing-md);
+  color: var(--color-gray-700);
+}
+
+/* Buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.625rem 1.25rem;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.5;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all var(--transition-base);
+  text-decoration: none;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.btn:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--color-primary-light);
+}
+
+.btn-primary {
+  background-color: var(--color-primary);
+  color: var(--color-white);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background-color: var(--color-primary-hover);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.btn-primary:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: var(--shadow-sm);
+}
+
+.btn-secondary {
+  background-color: var(--color-gray-200);
+  color: var(--color-gray-900);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background-color: var(--color-gray-300);
+}
+
+.btn-danger {
+  background-color: var(--color-danger);
+  color: var(--color-white);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background-color: #dc2626;
+  box-shadow: var(--shadow-md);
+}
+
+.btn-outline {
+  background-color: transparent;
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.btn-outline:hover:not(:disabled) {
+  background-color: var(--color-primary-light);
+}
+
+.btn-sm {
+  padding: 0.375rem 0.75rem;
+  font-size: var(--font-size-sm);
+}
+
+.btn-lg {
+  padding: 0.875rem 1.75rem;
+  font-size: var(--font-size-lg);
+}
+
+.btn-icon {
+  padding: 0.5rem;
+  border-radius: var(--radius-full);
+}
+
+.btn-icon svg {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+/* Form Inputs */
+.form-group {
+  margin-bottom: var(--spacing-lg);
+}
+
+.form-label {
+  display: block;
+  margin-bottom: var(--spacing-sm);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-gray-700);
+}
+
+.form-label-required::after {
+  content: ' *';
+  color: var(--color-danger);
+}
+
+.input,
+.textarea,
+.select {
+  width: 100%;
+  padding: 0.625rem 0.875rem;
+  font-size: var(--font-size-base);
+  line-height: 1.5;
+  color: var(--color-gray-900);
+  background-color: var(--color-white);
+  border: 1px solid var(--color-gray-300);
+  border-radius: var(--radius-md);
+  transition: all var(--transition-base);
+}
+
+.input:focus,
+.textarea:focus,
+.select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-light);
+}
+
+.input.error,
+.textarea.error,
+.select.error {
+  border-color: var(--color-danger);
+}
+
+.input.error:focus,
+.textarea.error:focus,
+.select.error:focus {
+  box-shadow: 0 0 0 3px var(--color-danger-light);
+}
+
+.input:disabled,
+.textarea:disabled,
+.select:disabled {
+  background-color: var(--color-gray-100);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.textarea {
+  min-height: 100px;
+  resize: vertical;
+}
+
+.error-text {
+  display: block;
+  margin-top: var(--spacing-xs);
+  font-size: var(--font-size-sm);
+  color: var(--color-danger);
+}
+
+.help-text {
+  display: block;
+  margin-top: var(--spacing-xs);
+  font-size: var(--font-size-sm);
+  color: var(--color-gray-500);
+}
+
+/* Cards */
+.card {
+  background-color: var(--color-white);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  padding: var(--spacing-lg);
+  transition: all var(--transition-base);
+}
+
+.card:hover {
+  box-shadow: var(--shadow-lg);
+  transform: translateY(-2px);
+}
+
+.card-header {
+  margin-bottom: var(--spacing-md);
+  padding-bottom: var(--spacing-md);
+  border-bottom: 1px solid var(--color-gray-200);
+}
+
+.card-title {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-gray-900);
+  margin: 0;
+}
+
+.card-body {
+  padding: var(--spacing-sm) 0;
+}
+
+.card-footer {
+  margin-top: var(--spacing-md);
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--color-gray-200);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* Badges */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.75rem;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  line-height: 1;
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+}
+
+.badge-primary {
+  background-color: var(--color-primary-light);
+  color: var(--color-primary-dark);
+}
+
+.badge-success {
+  background-color: var(--color-success-light);
+  color: #065f46; /* Green 800 */
+}
+
+.badge-warning {
+  background-color: var(--color-warning-light);
+  color: #92400e; /* Amber 800 */
+}
+
+.badge-danger {
+  background-color: var(--color-danger-light);
+  color: #991b1b; /* Red 800 */
+}
+
+.badge-gray {
+  background-color: var(--color-gray-200);
+  color: var(--color-gray-700);
+}
+
+/* Category badges */
+.badge-category-dairy {
+  background-color: #fef3c7; /* Amber 100 */
+  color: #92400e; /* Amber 800 */
+}
+
+.badge-category-meat {
+  background-color: var(--color-danger-light);
+  color: #991b1b;
+}
+
+.badge-category-produce {
+  background-color: var(--color-success-light);
+  color: #065f46;
+}
+
+.badge-category-bakery {
+  background-color: #ffedd5; /* Orange 100 */
+  color: #9a3412; /* Orange 800 */
+}
+
+.badge-category-pantry {
+  background-color: #ede9fe; /* Purple 100 */
+  color: #5b21b6; /* Purple 800 */
+}
+
+.badge-category-spices {
+  background-color: #fce7f3; /* Pink 100 */
+  color: #9f1239; /* Pink 800 */
+}
+
+.badge-category-other {
+  background-color: var(--color-gray-200);
+  color: var(--color-gray-700);
+}
+
+/* Modal */
+.modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  z-index: var(--z-modal-backdrop);
+  animation: fadeIn var(--transition-base);
+}
+
+.modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background-color: var(--color-white);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-2xl);
+  max-width: 90vw;
+  max-height: 90vh;
+  overflow: hidden;
+  z-index: var(--z-modal);
+  animation: slideUp var(--transition-slow);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-lg);
+  border-bottom: 1px solid var(--color-gray-200);
+}
+
+.modal-title {
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-semibold);
+  margin: 0;
+}
+
+.modal-close {
+  padding: 0.5rem;
+  border: none;
+  background: none;
+  color: var(--color-gray-500);
+  cursor: pointer;
+  transition: color var(--transition-base);
+  border-radius: var(--radius-md);
+}
+
+.modal-close:hover {
+  color: var(--color-gray-900);
+  background-color: var(--color-gray-100);
+}
+
+.modal-body {
+  padding: var(--spacing-lg);
+  overflow-y: auto;
+  max-height: calc(90vh - 140px);
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-md);
+  padding: var(--spacing-lg);
+  border-top: 1px solid var(--color-gray-200);
+}
+
+/* Toast Notifications */
+.toast-container {
+  position: fixed;
+  top: var(--spacing-lg);
+  right: var(--spacing-lg);
+  z-index: var(--z-tooltip);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  max-width: 400px;
+}
+
+.toast {
+  display: flex;
+  align-items: start;
+  padding: var(--spacing-md);
+  background-color: var(--color-white);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  border-left: 4px solid;
+  animation: slideInRight var(--transition-base);
+}
+
+.toast-success {
+  border-left-color: var(--color-success);
+}
+
+.toast-error {
+  border-left-color: var(--color-danger);
+}
+
+.toast-warning {
+  border-left-color: var(--color-warning);
+}
+
+.toast-info {
+  border-left-color: var(--color-info);
+}
+
+.toast-icon {
+  flex-shrink: 0;
+  margin-right: var(--spacing-sm);
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.toast-content {
+  flex-grow: 1;
+}
+
+.toast-message {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-gray-900);
+  margin: 0;
+}
+
+.toast-close {
+  flex-shrink: 0;
+  margin-left: var(--spacing-sm);
+  padding: 0.25rem;
+  border: none;
+  background: none;
+  color: var(--color-gray-500);
+  cursor: pointer;
+  transition: color var(--transition-base);
+}
+
+.toast-close:hover {
+  color: var(--color-gray-900);
+}
+
+/* Layout */
+.container {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 var(--spacing-lg);
+}
+
+.grid {
+  display: grid;
+  gap: var(--spacing-lg);
+}
+
+/* Responsive grid */
+@media (min-width: 1024px) {
+  .grid { grid-template-columns: repeat(3, 1fr); }
+  .grid-2 { grid-template-columns: repeat(2, 1fr); }
+  .grid-4 { grid-template-columns: repeat(4, 1fr); }
+}
+
+@media (min-width: 640px) and (max-width: 1023px) {
+  .grid { grid-template-columns: repeat(2, 1fr); }
+  .grid-2 { grid-template-columns: repeat(2, 1fr); }
+  .grid-4 { grid-template-columns: repeat(3, 1fr); }
+}
+
+@media (max-width: 639px) {
+  .grid,
+  .grid-2,
+  .grid-4 { 
+    grid-template-columns: 1fr; 
+  }
+}
+
+/* Loading States */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-gray-200) 25%,
+    var(--color-gray-300) 50%,
+    var(--color-gray-200) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: var(--radius-md);
+}
+
+.spinner {
+  display: inline-block;
+  width: 1.25rem;
+  height: 1.25rem;
+  border: 2px solid var(--color-gray-300);
+  border-top-color: var(--color-primary);
+  border-radius: var(--radius-full);
+  animation: spin 0.6s linear infinite;
+}
+
+.spinner-sm {
+  width: 1rem;
+  height: 1rem;
+}
+
+.spinner-lg {
+  width: 2rem;
+  height: 2rem;
+  border-width: 3px;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -45%);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%);
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Utility Classes */
+.text-center { text-align: center; }
+.text-left { text-align: left; }
+.text-right { text-align: right; }
+
+.flex { display: flex; }
+.flex-col { flex-direction: column; }
+.items-center { align-items: center; }
+.justify-center { justify-content: center; }
+.justify-between { justify-content: space-between; }
+.gap-sm { gap: var(--spacing-sm); }
+.gap-md { gap: var(--spacing-md); }
+.gap-lg { gap: var(--spacing-lg); }
+
+.hidden { display: none !important; }
+
+.mt-sm { margin-top: var(--spacing-sm); }
+.mt-md { margin-top: var(--spacing-md); }
+.mt-lg { margin-top: var(--spacing-lg); }
+.mb-sm { margin-bottom: var(--spacing-sm); }
+.mb-md { margin-bottom: var(--spacing-md); }
+.mb-lg { margin-bottom: var(--spacing-lg); }
+
+.p-sm { padding: var(--spacing-sm); }
+.p-md { padding: var(--spacing-md); }
+.p-lg { padding: var(--spacing-lg); }
+
+.w-full { width: 100%; }
+.h-full { height: 100%; }
+```
+
+---
+
+## 💻 COMPLETE Code Examples
+
+### Example 1: AddPantryItemModal.jsx (Frontend)
+
+```javascript
+import React, { useState, useEffect } from 'react';
+import { toast } from 'react-toastify';
+import api from '../api/client';
+
+function AddPantryItemModal({ isOpen, onClose, onSuccess }) {
+  const [formData, setFormData] = useState({
+    ingredient_name: '',
+    quantity: '',
+    unit: 'units'
+  });
+  const [errors, setErrors] = useState({});
+  const [loading, setLoading] = useState(false);
+  const [suggestions, setSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [searchLoading, setSearchLoading] = useState(false);
+
+  // Reset form when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      setFormData({ ingredient_name: '', quantity: '', unit: 'units' });
+      setErrors({});
+      setSuggestions([]);
+    }
+  }, [isOpen]);
+
+  // Autocomplete search
+  useEffect(() => {
+    const searchIngredients = async () => {
+      if (formData.ingredient_name.length < 2) {
+        setSuggestions([]);
+        return;
+      }
+
+      setSearchLoading(true);
+      try {
+        const response = await api.get(`/api/ingredients/search?q=${formData.ingredient_name}`);
+        setSuggestions(response.data.results || []);
+        setShowSuggestions(true);
+      } catch (error) {
+        console.error('Search failed:', error);
+      } finally {
+        setSearchLoading(false);
+      }
+    };
+
+    const debounceTimer = setTimeout(searchIngredients, 300);
+    return () => clearTimeout(debounceTimer);
+  }, [formData.ingredient_name]);
+
+  const validate = () => {
+    const newErrors = {};
+
+    if (!formData.ingredient_name.trim()) {
+      newErrors.ingredient_name = 'Ingredient name is required';
+    }
+
+    if (!formData.quantity || parseFloat(formData.quantity) <= 0) {
+      newErrors.quantity = 'Quantity must be positive';
+    }
+
+    if (!formData.unit) {
+      newErrors.unit = 'Unit is required';
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+
+    if (!validate()) return;
+
+    setLoading(true);
+    try {
+      const response = await api.post('/api/pantry', {
+        ingredient_name: formData.ingredient_name.trim(),
+        quantity: parseFloat(formData.quantity),
+        unit: formData.unit
+      });
+
+      toast.success('Item added successfully!', {
+        position: 'top-right',
+        autoClose: 3000,
+        hideProgressBar: false,
+        closeOnClick: true,
+        pauseOnHover: true,
+        draggable: true
+      });
+
+      onSuccess(response.data);
+      onClose();
+    } catch (error) {
+      console.error('Failed to add item:', error);
+
+      if (error.response?.status === 400 && error.response.data.fields) {
+        setErrors(error.response.data.fields);
+        toast.error('Please fix the errors');
+      } else {
+        const message = error.response?.data?.message || 'Failed to add item';
+        toast.error(message);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const selectSuggestion = (suggestion) => {
+    setFormData({
+      ...formData,
+      ingredient_name: suggestion.name,
+      unit: suggestion.default_unit
+    });
+    setShowSuggestions(false);
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <>
+      <div className="modal-backdrop" onClick={onClose} />
+      <div className="modal" style={{ width: '500px' }}>
+        <div className="modal-header">
+          <h3 className="modal-title">Add Pantry Item</h3>
+          <button 
+            className="modal-close" 
+            onClick={onClose}
+            aria-label="Close"
+          >
+            ✕
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit}>
+          <div className="modal-body">
+            <div className="form-group">
+              <label htmlFor="ingredient_name" className="form-label form-label-required">
+                Ingredient Name
+              </label>
+              <div style={{ position: 'relative' }}>
+                <input
+                  id="ingredient_name"
+                  type="text"
+                  value={formData.ingredient_name}
+                  onChange={(e) => setFormData({ ...formData, ingredient_name: e.target.value })}
+                  onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+                  onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
+                  className={errors.ingredient_name ? 'input error' : 'input'}
+                  placeholder="e.g., Milk, Eggs, Tomatoes"
+                  autoComplete="off"
+                  disabled={loading}
+                />
+                {searchLoading && (
+                  <div style={{ position: 'absolute', right: '12px', top: '12px' }}>
+                    <div className="spinner spinner-sm" />
+                  </div>
+                )}
+                {showSuggestions && suggestions.length > 0 && (
+                  <div style={{
+                    position: 'absolute',
+                    top: '100%',
+                    left: 0,
+                    right: 0,
+                    backgroundColor: 'var(--color-white)',
+                    border: '1px solid var(--color-gray-300)',
+                    borderRadius: 'var(--radius-md)',
+                    boxShadow: 'var(--shadow-lg)',
+                    marginTop: 'var(--spacing-xs)',
+                    maxHeight: '200px',
+                    overflowY: 'auto',
+                    zIndex: 1000
+                  }}>
+                    {suggestions.map((suggestion) => (
+                      <div
+                        key={suggestion.id}
+                        onClick={() => selectSuggestion(suggestion)}
+                        style={{
+                          padding: 'var(--spacing-sm) var(--spacing-md)',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center'
+                        }}
+                        onMouseEnter={(e) => e.target.style.backgroundColor = 'var(--color-gray-100)'}
+                        onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
+                      >
+                        <span style={{ fontWeight: 'var(--font-weight-medium)' }}>
+                          {suggestion.name}
+                        </span>
+                        <span className={`badge badge-category-${suggestion.category.toLowerCase()}`}>
+                          {suggestion.category}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {errors.ingredient_name && (
+                <span className="error-text">{errors.ingredient_name}</span>
+              )}
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 'var(--spacing-md)' }}>
+              <div className="form-group">
+                <label htmlFor="quantity" className="form-label form-label-required">
+                  Quantity
+                </label>
+                <input
+                  id="quantity"
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  value={formData.quantity}
+                  onChange={(e) => setFormData({ ...formData, quantity: e.target.value })}
+                  className={errors.quantity ? 'input error' : 'input'}
+                  placeholder="1.5"
+                  disabled={loading}
+                />
+                {errors.quantity && (
+                  <span className="error-text">{errors.quantity}</span>
+                )}
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="unit" className="form-label form-label-required">
+                  Unit
+                </label>
+                <select
+                  id="unit"
+                  value={formData.unit}
+                  onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
+                  className="select"
+                  disabled={loading}
+                >
+                  <option value="units">Units</option>
+                  <option value="grams">Grams</option>
+                  <option value="kilograms">Kilograms</option>
+                  <option value="liters">Liters</option>
+                  <option value="milliliters">Milliliters</option>
+                </select>
+                {errors.unit && (
+                  <span className="error-text">{errors.unit}</span>
+                )}
+              </div>
+            </div>
+
+            <p className="help-text">
+              Start typing to see ingredient suggestions. Quantities will be merged if the ingredient already exists.
+            </p>
+          </div>
+
+          <div className="modal-footer">
+            <button
+              type="button"
+              onClick={onClose}
+              className="btn btn-secondary"
+              disabled={loading}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={loading}
+            >
+              {loading ? (
+                <>
+                  <span className="spinner spinner-sm" style={{ marginRight: 'var(--spacing-sm)' }} />
+                  Adding...
+                </>
+              ) : (
+                'Add Item'
+              )}
+            </button>
+          </div>
+        </form>
+      </div>
+    </>
+  );
+}
+
+export default AddPantryItemModal;
+```
+
+### Example 2: Pantry Router (Backend)
+
+```python
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlmodel import Session, select
+from typing import List, Optional
+from datetime import datetime
+
+from app.database import get_session
+from app.models import PantryItem, Ingredient
+from app.services.pantry_service import (
+    normalize_ingredient_name, 
+    normalize_unit,
+    fuzzy_search_ingredients
+)
+from pydantic import BaseModel, Field, validator
+
+
+router = APIRouter()
+
+
+class PantryItemCreate(BaseModel):
+    """Request model for creating pantry item"""
+    ingredient_name: str = Field(..., min_length=1, max_length=200)
+    quantity: float = Field(..., gt=0)
+    unit: str = Field(..., min_length=1)
+
+    @validator('ingredient_name')
+    def validate_ingredient_name(cls, v):
+        if not v.strip():
+            raise ValueError('Ingredient name cannot be empty')
+        return v.strip()
+
+    @validator('unit')
+    def validate_unit(cls, v):
+        allowed_units = ['units', 'grams', 'kilograms', 'liters', 'milliliters']
+        if v.lower() not in allowed_units:
+            raise ValueError(f'Unit must be one of: {", ".join(allowed_units)}')
+        return v.lower()
+
+
+class PantryItemUpdate(BaseModel):
+    """Request model for updating pantry item"""
+    quantity: float = Field(..., gt=0)
+    unit: str = Field(..., min_length=1)
+
+    @validator('unit')
+    def validate_unit(cls, v):
+        allowed_units = ['units', 'grams', 'kilograms', 'liters', 'milliliters']
+        if v.lower() not in allowed_units:
+            raise ValueError(f'Unit must be one of: {", ".join(allowed_units)}')
+        return v.lower()
+
+
+class PantryItemResponse(BaseModel):
+    """Response model for pantry item"""
+    id: int
+    ingredient_name: str
+    quantity: float
+    unit: str
+    category: str
+    updated_at: str
+
+
+class PantryListResponse(BaseModel):
+    """Response model for pantry list"""
+    items: List[PantryItemResponse]
+    total: int
+
+
+@router.get("/pantry", response_model=PantryListResponse, status_code=200)
+def get_pantry(
+    session: Session = Depends(get_session),
+    user_id: int = Query(default=1, ge=1)
+):
+    """
+    Get all pantry items for user.
+
+    Returns list of pantry items with ingredient details.
+    """
+    try:
+        # Query with join to get ingredient details
+        statement = (
+            select(PantryItem, Ingredient)
+            .join(Ingredient)
+            .where(PantryItem.user_id == user_id)
+            .order_by(Ingredient.name)
+        )
+
+        results = session.exec(statement).all()
+
+        items = [
+            PantryItemResponse(
+                id=item.id,
+                ingredient_name=ing.name,
+                quantity=item.quantity,
+                unit=item.unit,
+                category=ing.category,
+                updated_at=item.updated_at.isoformat()
+            )
+            for item, ing in results
+        ]
+
+        return PantryListResponse(
+            items=items,
+            total=len(items)
+        )
+
+    except Exception as e:
+        # Log error (in production, use proper logging)
+        print(f"Error fetching pantry: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "DatabaseError",
+                "message": "Failed to fetch pantry items",
+                "details": str(e)
+            }
+        )
+
+
+@router.post("/pantry", status_code=201)
+def add_pantry_item(
+    item: PantryItemCreate,
+    session: Session = Depends(get_session),
+    user_id: int = 1
+):
+    """
+    Add item to pantry.
+
+    Auto-creates ingredient if it doesn't exist.
+    Merges quantities if item already exists in pantry.
+    """
+    try:
+        # Normalize ingredient name
+        norm_name = normalize_ingredient_name(item.ingredient_name)
+
+        # Find or create ingredient
+        ing = session.exec(
+            select(Ingredient).where(Ingredient.normalized_name == norm_name)
+        ).first()
+
+        if not ing:
+            ing = Ingredient(
+                name=item.ingredient_name,
+                normalized_name=norm_name,
+                category="Other",
+                default_unit=item.unit
+            )
+            session.add(ing)
+            session.commit()
+            session.refresh(ing)
+
+        # Normalize unit
+        normalized_unit = normalize_unit(item.unit)
+
+        # Check if item already exists in pantry
+        existing = session.exec(
+            select(PantryItem).where(
+                PantryItem.ingredient_id == ing.id,
+                PantryItem.user_id == user_id
+            )
+        ).first()
+
+        if existing:
+            # Merge quantities
+            previous_quantity = existing.quantity
+            existing.quantity += item.quantity
+            existing.unit = normalized_unit
+            existing.updated_at = datetime.now()
+            session.add(existing)
+            session.commit()
+
+            return {
+                "message": "Quantity updated",
+                "id": existing.id,
+                "previous_quantity": previous_quantity,
+                "new_quantity": existing.quantity
+            }
+        else:
+            # Create new pantry item
+            pantry_item = PantryItem(
+                ingredient_id=ing.id,
+                quantity=item.quantity,
+                unit=normalized_unit,
+                user_id=user_id
+            )
+            session.add(pantry_item)
+            session.commit()
+            session.refresh(pantry_item)
+
+            return {
+                "message": "Item added",
+                "id": pantry_item.id,
+                "ingredient": {
+                    "id": ing.id,
+                    "name": ing.name,
+                    "normalized_name": ing.normalized_name,
+                    "category": ing.category
+                }
+            }
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "ValidationError",
+                "message": str(e)
+            }
+        )
+    except Exception as e:
+        print(f"Error adding pantry item: {e}")
+        session.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "ServerError",
+                "message": "Failed to add item",
+                "details": str(e)
+            }
+        )
+
+
+@router.patch("/pantry/{item_id}", status_code=200)
+def update_pantry_item(
+    item_id: int,
+    update: PantryItemUpdate,
+    session: Session = Depends(get_session)
+):
+    """Update pantry item quantity and unit."""
+    try:
+        item = session.get(PantryItem, item_id)
+        if not item:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "NotFound",
+                    "message": f"Pantry item with id {item_id} not found"
+                }
+            )
+
+        # Update fields
+        item.quantity = update.quantity
+        item.unit = normalize_unit(update.unit)
+        item.updated_at = datetime.now()
+
+        session.add(item)
+        session.commit()
+
+        return {
+            "message": "Item updated",
+            "id": item_id,
+            "updated_fields": ["quantity", "unit"]
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error updating pantry item: {e}")
+        session.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "ServerError",
+                "message": "Failed to update item",
+                "details": str(e)
+            }
+        )
+
+
+@router.delete("/pantry/{item_id}", status_code=200)
+def delete_pantry_item(
+    item_id: int,
+    session: Session = Depends(get_session)
+):
+    """Delete pantry item."""
+    try:
+        item = session.get(PantryItem, item_id)
+        if not item:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "NotFound",
+                    "message": f"Pantry item with id {item_id} not found"
+                }
+            )
+
+        session.delete(item)
+        session.commit()
+
+        return {
+            "message": "Item deleted",
+            "id": item_id
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error deleting pantry item: {e}")
+        session.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "ServerError",
+                "message": "Failed to delete item",
+                "details": str(e)
+            }
+        )
+
+
+@router.get("/ingredients/search", status_code=200)
+def search_ingredients(
+    q: str = Query(..., min_length=1, description="Search query"),
+    session: Session = Depends(get_session)
+):
+    """
+    Fuzzy search ingredients for autocomplete.
+
+    Returns top 10 matches with confidence scores.
+    """
+    try:
+        results = fuzzy_search_ingredients(q, session, limit=10)
+
+        return {
+            "results": results,
+            "query": q,
+            "total": len(results)
+        }
+
+    except Exception as e:
+        print(f"Error searching ingredients: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "SearchError",
+                "message": "Failed to search ingredients",
+                "details": str(e)
+            }
+        )
+```
+
+---
+
+## ✅ COMPLETE Quality Requirements Checklist
+
+### Frontend Checklist
+
+☐ **All features must have:**
+  - Working API calls (no TODO comments or mock data)
+  - Error handling with user-friendly messages
+  - Loading states (spinners/skeletons during API calls)
+  - Form validation with real-time error highlights
+  - Success feedback (toast notifications)
+  - Responsive design (mobile 360px+, tablet 768px+, desktop 1024px+)
+  - Accessibility (ARIA labels, keyboard navigation, focus states)
+  - Complete styling (no unstyled elements, follows design system)
+
+☐ **Every button must:**
+  - Have disabled state during loading
+  - Show spinner + text during loading
+  - Have hover effects
+  - Have focus outlines
+  - Work with keyboard (Enter/Space)
+
+☐ **Every form must:**
+  - Validate on blur and submit
+  - Show field-specific errors below inputs
+  - Highlight invalid fields with red borders
+  - Disable submit during loading
+  - Reset after successful submission
+  - Handle server validation errors
+
+☐ **Every modal must:**
+  - Have backdrop click to close
+  - Have X button to close
+  - Have Escape key to close
+  - Animate in/out (300ms)
+  - Trap focus inside
+  - Restore focus after close
+
+☐ **Every API call must:**
+  - Have try/catch error handling
+  - Show loading indicator
+  - Show success toast on success
+  - Show error toast on failure
+  - Parse and display server error messages
+  - Timeout after 30 seconds
+
+### Backend Checklist
+
+☐ **All endpoints must have:**
+  - Input validation using Pydantic
+  - Parameterized database queries (NO string concatenation)
+  - Error handling with try/except
+  - Logging of operations
+  - Appropriate HTTP status codes
+  - Consistent JSON error format
+  - Request timeout handling
+  - Database transaction rollback on errors
+
+☐ **Every endpoint must return:**
+  - 200 OK for successful GET/PUT/PATCH/DELETE
+  - 201 Created for successful POST
+  - 400 Bad Request for validation errors
+  - 404 Not Found for missing resources
+  - 422 Unprocessable Entity for semantic errors
+  - 500 Internal Server Error for server errors
+  - 503 Service Unavailable for external service failures
+
+☐ **Every database operation must:**
+  - Use session context manager
+  - Commit only after all operations succeed
+  - Rollback on any error
+  - Refresh objects after commit when needed
+  - Use indexes for queried fields
+  - Have foreign key constraints
+  - Have data validation constraints
+
+☐ **Every external service call (Ollama) must:**
+  - Have timeout (60 seconds max)
+  - Have retry logic (optional)
+  - Return fallback on failure
+  - Log request and response
+  - Handle connection errors gracefully
+
+### Database Checklist
+
+☐ **Schema must have:**
+  - Primary keys on all tables
+  - Foreign keys with CASCADE/RESTRICT
+  - Check constraints for data validation
+  - Indexes on frequently queried fields
+  - Full-text search indexes where appropriate
+  - Timestamps (created_at, updated_at)
+  - Triggers for auto-updating timestamps
+
+☐ **All tables must:**
+  - Have singular names (user, not users - SQLModel convention)
+  - Have snake_case column names
+  - Have appropriate data types
+  - Have NOT NULL where appropriate
+  - Have UNIQUE constraints where appropriate
+  - Have sensible defaults
+
+### Testing Checklist
+
+☐ **Every endpoint must have tests for:**
+  - Successful operation (200/201)
+  - Validation errors (400/422)
+  - Not found errors (404)
+  - Server errors (500)
+  - Edge cases (empty data, duplicates, etc.)
+
+☐ **Integration tests must verify:**
+  - Full user flows end-to-end
+  - Data persistence across requests
+  - Error recovery
+  - State consistency
+
+---
+
+## 🧪 Verification Test Scenarios
+
+### Scenario 1: Add Item to Pantry
+1. Navigate to Pantry page
+2. Click "+" FAB
+3. Modal should open with animation
+4. Type "mil" in ingredient field
+5. Suggestions should appear after 2 characters
+6. Click "Milk 3.5%" suggestion
+7. Field should autofill, unit should be "liters"
+8. Enter quantity "2"
+9. Click "Add Item"
+10. Button should show spinner
+11. Success toast should appear
+12. Modal should close
+13. New card for "Milk 3.5%, 2 liters" should appear in grid
+14. Card should have category badge "Dairy" in yellow
+15. Database should have 1 pantry_item row
+16. **PASS CRITERIA:** All steps work without errors, data persists
+
+### Scenario 2: Generate Recipe from Pantry
+1. Add 5+ items to pantry (milk, eggs, flour, butter, sugar)
+2. Navigate to Planner page
+3. Select cuisine "Italian"
+4. Set time to 30 minutes
+5. Click "Generate Recipe"
+6. Button should disable, show "Generating..." with spinner
+7. Cooking pot animation should appear
+8. Wait up to 15 seconds
+9. Recipe card should appear with:
+   - Title (e.g., "Italian Pancakes")
+   - Cuisine badge "Italian"
+   - Time "30 minutes"
+   - Ingredients list (using pantry items)
+   - Numbered instructions
+10. All text should be readable, properly formatted
+11. Database should have 1 new recipe row
+12. **PASS CRITERIA:** Recipe generated, uses pantry ingredients, all fields populated
+
+### Scenario 3: Upload and Parse Receipt
+1. Navigate to Receipts page
+2. Drag sample receipt text file to upload zone
+3. File name should appear
+4. Click "Upload"
+5. Progress bar should animate to 100%
+6. Receipt card should appear
+7. Click "Parse Receipt"
+8. Select "AI Parse (Ollama)"
+9. Check "Add to pantry automatically"
+10. Click "Parse"
+11. "Parsing receipt..." should appear
+12. Wait up to 10 seconds
+13. Parsed items table should appear with 5+ rows
+14. Each row should have item name, quantity, unit
+15. Click "Add Selected to Pantry"
+16. Toast: "5 items added to pantry"
+17. Navigate to Pantry page
+18. All 5 items should appear in grid
+19. **PASS CRITERIA:** Receipt parsed, items added, pantry updated
+
+### Scenario 4: Error Handling
+1. Stop Ollama service
+2. Try to generate recipe
+3. Should show error: "Cannot connect to Ollama service"
+4. Should show "Try Again" button
+5. Start Ollama
+6. Click "Try Again"
+7. Should work normally
+8. **PASS CRITERIA:** Graceful error, no crash, recovery works
+
+### Scenario 5: Form Validation
+1. Open Add Item modal
+2. Click "Add Item" without filling form
+3. Should see errors: "Ingredient name is required", "Quantity must be positive"
+4. Fields should have red borders
+5. Fill ingredient name "Test"
+6. Enter quantity "-1"
+7. Blur field
+8. Should see error: "Quantity must be positive"
+9. Enter quantity "2.5"
+10. Error should disappear
+11. Submit form
+12. Should succeed
+13. **PASS CRITERIA:** All validation works, errors clear when fixed
+
+### Scenario 6: Responsive Design
+1. Open app on desktop (1920x1080)
+2. Pantry grid should show 3 columns
+3. Resize to tablet (768x1024)
+4. Grid should show 2 columns
+5. Resize to mobile (375x667)
+6. Grid should show 1 column
+7. All text should be readable
+8. No horizontal scroll
+9. Buttons should be tap-friendly (44px+ height)
+10. **PASS CRITERIA:** Layout adapts, no UI breaks
+
+---
+
+## 🚀 Implementation Priority
+
+### Phase 1: Foundation (Week 1)
+1. ✅ Project structure
+2. ✅ Database schema + migrations
+3. ✅ Backend: Pantry CRUD endpoints
+4. ✅ Backend: Ingredient search
+5. ✅ Frontend: Basic routing
+6. ✅ Frontend: Design system CSS
+7. ✅ Frontend: Pantry page + CRUD UI
+8. ✅ Test: Pantry CRUD end-to-end
+
+### Phase 2: AI Integration (Week 2)
+1. ✅ Ollama client service
+2. ✅ Recipe generation endpoint
+3. ✅ Frontend: Recipe generation UI
+4. ✅ Meal history endpoints
+5. ✅ Frontend: History tracking
+6. ✅ Test: Recipe generation flow
+
+### Phase 3: Receipt Processing (Week 3)
+1. ✅ Receipt upload endpoint
+2. ✅ OCR service (mock + real)
+3. ✅ Receipt parser (regex + LLM)
+4. ✅ Frontend: Receipt upload UI
+5. ✅ Frontend: Parsed receipt review
+6. ✅ Test: Receipt parsing flow
+
+### Phase 4: Polish & Deploy (Week 4)
+1. ✅ Error handling improvements
+2. ✅ Loading states everywhere
+3. ✅ Accessibility audit
+4. ✅ Performance optimization
+5. ✅ Docker setup
+6. ✅ Documentation
+7. ✅ Final testing
+
+---
+
+## 🎯 Success Criteria
+
+The project is COMPLETE when:
+
+☑ **Pantry Management:**
+  - Can add, edit, delete items
+  - Autocomplete works with >60% confidence
+  - Quantities merge automatically
+  - Category badges display correctly
+  - Mobile responsive
+
+☑ **Recipe Generation:**
+  - Generates recipes in <15 seconds
+  - Uses only pantry ingredients
+  - Returns valid recipe structure
+  - Avoids recent ingredients
+  - Error handling for Ollama failures
+
+☑ **Receipt Parsing:**
+  - Accepts image and text files
+  - OCR extracts text correctly
+  - Parser identifies food items
+  - Ignores non-food items
+  - Adds to pantry with confirmation
+
+☑ **User Experience:**
+  - No placeholder buttons/TODOs
+  - All buttons work and show loading
+  - All forms validate properly
+  - All errors show user-friendly messages
+  - All success actions show toasts
+  - Responsive on all screen sizes
+
+☑ **Code Quality:**
+  - No SQL injection vulnerabilities
+  - All inputs validated
+  - All errors logged
+  - All operations have timeouts
+  - Clean, commented code
+
+☑ **Performance:**
+  - Page loads in <2 seconds
+  - API responses in <1 second (except recipe gen)
+  - Database queries use indexes
+  - No N+1 query problems
+
+---
+
+## 📦 Deliverables
+
+1. **Working Application:**
+   - Backend API running on port 8000
+   - Frontend running on port 5173
+   - Database with seed data
+   - Ollama configured and running
+
+2. **Documentation:**
+   - README.md with setup instructions
+   - API documentation (auto-generated by FastAPI)
+   - Component documentation
+   - Troubleshooting guide
+
+3. **Tests:**
+   - Backend: pytest with 80%+ coverage
+   - Frontend: Manual test checklist completed
+   - Integration tests for critical flows
+
+4. **Deployment:**
+   - docker-compose.yml for entire stack
+   - .env.example with all required variables
+   - Database migration scripts
+   - Seed data scripts
+
+---
+
+## 🔧 Development Commands
+
+```bash
+# Backend
+cd backend
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+# Frontend
+cd frontend
+npm install
+npm run dev
+
+# Database (PostgreSQL with Docker)
+docker-compose up -d postgres
+python backend/app/database.py  # Run migrations
+
+# Ollama
+ollama serve
+ollama pull gemma2:2b
+
+# Tests
+cd backend
+pytest tests/ -v --cov=app
+
+# Full Stack
+docker-compose up --build
+```
+
+---
+
+## 🎨 Component Library Reference
+
+All components follow these patterns. Copy and adapt:
+
+**Pattern: API Call Component**
+```jsx
+const [data, setData] = useState(null);
+const [loading, setLoading] = useState(false);
+const [error, setError] = useState(null);
+
+useEffect(() => {
+  const fetchData = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await api.get('/endpoint');
+      setData(response.data);
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to load');
+      toast.error(error);
+    } finally {
+      setLoading(false);
+    }
+  };
+  fetchData();
+}, []);
+
+if (loading) return <Skeleton />;
+if (error) return <ErrorMessage message={error} />;
+if (!data) return null;
+```
+
+**Pattern: Form Component**
+```jsx
+const [formData, setFormData] = useState({});
+const [errors, setErrors] = useState({});
+const [loading, setLoading] = useState(false);
+
+const validate = () => {
+  const newErrors = {};
+  // Add validation logic
+  setErrors(newErrors);
+  return Object.keys(newErrors).length === 0;
+};
+
+const handleSubmit = async (e) => {
+  e.preventDefault();
+  if (!validate()) return;
+
+  setLoading(true);
+  try {
+    await api.post('/endpoint', formData);
+    toast.success('Success!');
+    onSuccess();
+  } catch (err) {
+    if (err.response?.data?.fields) {
+      setErrors(err.response.data.fields);
+    }
+    toast.error(err.response?.data?.message || 'Failed');
+  } finally {
+    setLoading(false);
+  }
+};
+```
+
+---
+
+END OF SPECIFICATION

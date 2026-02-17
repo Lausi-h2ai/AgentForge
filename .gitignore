@@ -1,0 +1,27 @@
+# .gitignore
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# IDE files
+.idea/
+.vscode/
+
+# Project Outputs
+*_workspace/
+logs/
+qdrant_storage/
+skill_cache/
+data/
+monitor_ui/
+tests/__pycache__/
+
+# Environment
+.env
+
+projects/
