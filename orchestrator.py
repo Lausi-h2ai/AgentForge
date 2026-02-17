@@ -38,19 +38,31 @@ from orchestrator_core.pipeline import (
     execute_testing_stage,
 )
 
-# Review timeout configuration (seconds)
-REVIEW_TIMEOUT_CONFIG = {
-    "simple": 60,
-    "medium": 120,
-    "complex": 180,
-}
-
 # LlamaIndex imports
 from llama_index.core import VectorStoreIndex, Document
 
 # Load environment variables
 from dotenv import load_dotenv
 load_dotenv()
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+# Review timeout configuration (seconds)
+REVIEW_TIMEOUT_CONFIG = {
+    "simple": _env_int("REVIEW_TIMEOUT_SIMPLE", 60),
+    "medium": _env_int("REVIEW_TIMEOUT_MEDIUM", 120),
+    "complex": _env_int("REVIEW_TIMEOUT_COMPLEX", 180),
+}
 
 # Import refactored agents
 from agents import (

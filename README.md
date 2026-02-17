@@ -97,6 +97,11 @@ For **Google**:
 - `GOOGLE_EXECUTION_MODEL`
 - `GOOGLE_MODEL` (fallback)
 
+Reviewer timeout tuning:
+- `REVIEW_TIMEOUT_SIMPLE`
+- `REVIEW_TIMEOUT_MEDIUM`
+- `REVIEW_TIMEOUT_COMPLEX`
+
 If no model is specified, the same model is used for all phases.
 
 ## How to Run
