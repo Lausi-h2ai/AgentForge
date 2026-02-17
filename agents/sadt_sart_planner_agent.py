@@ -15,6 +15,21 @@ import json
 import os
 import re
 from typing import List
+from prompt_loader import load_versioned_prompt
+
+
+DEFAULT_PLANNER_BASE_PROMPT = """You are a task planning expert for software projects.
+Create a detailed, executable plan for coding agents.
+
+Reliability rules:
+- Output valid JSON only.
+- Do not include tasks that require running commands, installing packages, or manual actions.
+- Every task must produce concrete file changes.
+
+Quality rules:
+- Plans should be complete, scoped, and implementation-ready.
+- Include error handling and realistic integration steps where needed.
+"""
 
 
 class SADTSARTPlannerAgent(BaseAgent):
@@ -439,8 +454,18 @@ Task strategy:
 - Separate data layer from API layer from UI layer
 """
 
-        system_message = f"""You are a task planning expert for complex software projects.
-Create a detailed, hierarchical workplan.
+        planner_base = load_versioned_prompt(
+            "planner",
+            "base",
+            DEFAULT_PLANNER_BASE_PROMPT,
+        )
+        complexity_note = load_versioned_prompt(
+            "planner",
+            f"complexity/{complexity}",
+            complexity_note,
+        )
+
+        system_message = f"""{planner_base}
 
 {complexity_note}
 

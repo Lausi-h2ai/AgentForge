@@ -32,6 +32,23 @@ def detect_task_type(task_text: str, default: str = "modify_file") -> str:
     return default
 
 
+def detect_requirements_profile(text: str) -> str:
+    lower = (text or "").lower()
+    if _matches(lower, r"\b(hello world|simple script|minimal|single file)\b"):
+        return "simple_app"
+    if _matches(lower, r"\b(full[- ]stack|microservice|production|multi[- ]tenant|ocr|ollama)\b"):
+        return "complex_app"
+    return "standard_app"
+
+
+def detect_architecture_profile(text: str) -> str:
+    lower = (text or "").lower()
+    if _matches(lower, r"\b(full[- ]stack|react|frontend|ui)\b"):
+        return "fullstack"
+    if _matches(lower, r"\b(api|fastapi|flask|backend|service)\b"):
+        return "backend_api"
+    return "general"
+
+
 def _matches(text: str, pattern: str) -> bool:
     return re.search(pattern, text, flags=re.IGNORECASE) is not None
-

@@ -71,6 +71,12 @@ Smart Pantry & Recipe App (Paintroo): a single-user MVP that manages pantry item
 - Added prompt set `v2` with stronger reliability rules (canonical tool-call format, anti-loop guidance, explicit done criteria) and code-quality focus.
 - `.env.example` now defaults to `PROMPT_DEVELOPER_VERSION=v2` and `PROMPT_REVIEWER_VERSION=v2`.
 
+## Memory (2026-02-17) - Prompt Routing v2 for Planning/Requirements/Architecture
+- Requirements analyst prompt is now versioned and loaded from `prompts/requirements_analyst/<version>/base.md` with rule-based profile overlays in `profiles/*.md`.
+- Software architect prompt is now versioned and loaded from `prompts/software_architect/<version>/base.md` with profile overlays (`general`, `backend_api`, `fullstack`).
+- SADT planner now loads versioned base prompt from `prompts/planner/<version>/base.md` and complexity overlays from `complexity/{simple|medium|complex}.md`.
+- Added env version controls: `PROMPT_REQUIREMENTS_ANALYST_VERSION`, `PROMPT_SOFTWARE_ARCHITECT_VERSION`, `PROMPT_PLANNER_VERSION`.
+
 ## Memory (2026-02-13) - HippocampAI Local Memory Integration
 - Added local HippocampAI memory wrapper under `memory/` with safe imports and scoped user IDs (project, agent, global).
 - Orchestrator now injects memory context into requirements, architecture, planning, developer, and reviewer prompts.
