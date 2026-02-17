@@ -104,6 +104,17 @@ Reviewer timeout tuning:
 
 If no model is specified, the same model is used for all phases.
 
+## Prompt Configuration
+
+Prompt files are loaded from `prompts/<agent>/<version>/`.
+
+- `PROMPT_DEVELOPER_VERSION` (example: `v2`)
+- `PROMPT_REVIEWER_VERSION` (example: `v2`)
+
+Prompt routing is rule-based by task type and applies additional overlays from:
+- `prompts/developer/<version>/task_types/*.md`
+- `prompts/reviewer/<version>/task_types/*.md`
+
 ## How to Run
 
 ```bash

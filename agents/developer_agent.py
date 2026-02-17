@@ -12,6 +12,7 @@ import re
 from typing import List, Dict, Optional, Tuple
 from collections import defaultdict, deque
 from .base_agent import BaseAgent
+from .prompt_router import detect_task_type
 from skill_manager import inject_skills_into_system_message
 from prompt_loader import load_versioned_prompt
 from llama_index.core.tools import FunctionTool
@@ -128,16 +129,28 @@ class DeveloperAgent(BaseAgent):
             self.logger.log("INFO", f"DeveloperAgent starting: {task[:100]}")
         
         full_prompt = task
+        task_type = detect_task_type(task, default="modify_file")
+        task_type_guidance = load_versioned_prompt(
+            "developer",
+            f"task_types/{task_type}",
+            default_text="",
+        )
+        routed_system_message = (
+            self.base_system_message
+            + "\n\n"
+            + self.enhanced_system_message
+            + (f"\n\n{task_type_guidance}" if task_type_guidance else "")
+        )
         allow_skill_injection = True
         if system_prompt is not None:
             self.agent.system_prompt = system_prompt
             allow_skill_injection = False
         else:
-            self.agent.system_prompt = self.system_message
+            self.agent.system_prompt = routed_system_message
 
         if self.skill_manager and allow_skill_injection:
             improved_system_message = inject_skills_into_system_message(
-                self.system_message,
+                routed_system_message,
                 task,
                 self.skill_manager,
                 token_budget=32000

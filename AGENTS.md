@@ -63,6 +63,14 @@ Smart Pantry & Recipe App (Paintroo): a single-user MVP that manages pantry item
 - Added reviewer confidence scores: ReviewReport now accepts optional confidence (0.0–1.0). submit_review outputs confidence. Reviewer tool wrapper auto-injects confidence if missing (simple heuristic based on tool usage).
 - Updated allowed review issue types to include syntax_error.
 
+## Memory (2026-02-17) - Prompt Routing v2
+- Added rule-based task-type prompt routing in `agents/prompt_router.py` with task classes:
+  `create_file`, `modify_file`, `bugfix`, `refactor`, `test_write`, `review`.
+- Developer and reviewer now load base + enhanced/system prompts plus task-type overlays from:
+  `prompts/developer/<version>/task_types/*.md` and `prompts/reviewer/<version>/task_types/*.md`.
+- Added prompt set `v2` with stronger reliability rules (canonical tool-call format, anti-loop guidance, explicit done criteria) and code-quality focus.
+- `.env.example` now defaults to `PROMPT_DEVELOPER_VERSION=v2` and `PROMPT_REVIEWER_VERSION=v2`.
+
 ## Memory (2026-02-13) - HippocampAI Local Memory Integration
 - Added local HippocampAI memory wrapper under `memory/` with safe imports and scoped user IDs (project, agent, global).
 - Orchestrator now injects memory context into requirements, architecture, planning, developer, and reviewer prompts.

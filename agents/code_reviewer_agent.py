@@ -8,6 +8,7 @@ import asyncio
 import traceback
 from typing import List, Dict, Optional, Tuple
 from .base_agent import BaseAgent
+from .prompt_router import detect_task_type
 from llama_index.core.tools import FunctionTool
 from llama_index.core.agent import ReActAgent
 from llama_index.core.workflow import Context, StopEvent
@@ -113,11 +114,19 @@ Action Input: {{"report": {{"issues": [...]}}}}
 **START NOW. CALL submit_review WITHIN {self.review_timeout} SECONDS.**
 Include a confidence score (0.0-1.0) in the report if possible.
 """
+        task_type = detect_task_type(task, default="review")
+        task_type_guidance = load_versioned_prompt(
+            "reviewer",
+            f"task_types/{task_type}",
+            default_text="",
+        )
         
         if self.logger:
             self.logger.log("INFO", f"Starting code review (timeout: {self.review_timeout}s)")
         
         self.system_message = self.system_message_template.replace("__TIMEOUT__", str(self.review_timeout))
+        if task_type_guidance:
+            self.system_message = f"{self.system_message}\n\n{task_type_guidance}"
         self.agent.system_prompt = self.system_message
         if self.skill_manager:
             improved_system_message = inject_skills_into_system_message(self.system_message, task, self.skill_manager, token_budget=32000)
