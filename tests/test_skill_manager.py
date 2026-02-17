@@ -15,9 +15,18 @@ def _write_skill(root: Path, name: str, body: str):
     (skill_dir / "SKILL.md").write_text(body, encoding="utf-8")
 
 
-def test_detect_relevant_skills_by_keyword(tmp_path):
+def _mk_tmp_dir(name: str) -> Path:
+    base = ROOT / ".test_tmp"
+    base.mkdir(exist_ok=True)
+    d = base / name
+    d.mkdir(exist_ok=True)
+    return d
+
+
+def test_detect_relevant_skills_by_keyword():
+    tmp_path = _mk_tmp_dir("skill_kw")
     skills_dir = tmp_path / "skills"
-    skills_dir.mkdir()
+    skills_dir.mkdir(exist_ok=True)
 
     _write_skill(
         skills_dir,
@@ -31,9 +40,10 @@ def test_detect_relevant_skills_by_keyword(tmp_path):
     assert "backend-api" in skills
 
 
-def test_get_skills_for_task_returns_formatted(tmp_path):
+def test_get_skills_for_task_returns_formatted():
+    tmp_path = _mk_tmp_dir("skill_fmt")
     skills_dir = tmp_path / "skills"
-    skills_dir.mkdir()
+    skills_dir.mkdir(exist_ok=True)
 
     _write_skill(
         skills_dir,
@@ -48,9 +58,10 @@ def test_get_skills_for_task_returns_formatted(tmp_path):
     assert "SKILL: FRONTEND-DESIGN" in formatted
 
 
-def test_summarize_large_skill(tmp_path):
+def test_summarize_large_skill():
+    tmp_path = _mk_tmp_dir("skill_sum")
     skills_dir = tmp_path / "skills"
-    skills_dir.mkdir()
+    skills_dir.mkdir(exist_ok=True)
 
     long_body = "# Long Skill\n\n" + ("Rule: Always do X.\n" * 500)
     _write_skill(skills_dir, "long-skill", long_body)
@@ -62,9 +73,10 @@ def test_summarize_large_skill(tmp_path):
     assert len(summary) > 0
 
 
-def test_auto_detect_keywords(tmp_path):
+def test_auto_detect_keywords():
+    tmp_path = _mk_tmp_dir("skill_auto")
     skills_dir = tmp_path / "skills"
-    skills_dir.mkdir()
+    skills_dir.mkdir(exist_ok=True)
 
     _write_skill(
         skills_dir,

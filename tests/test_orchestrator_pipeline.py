@@ -258,14 +258,28 @@ class DummyPlanner:
 
 
 def _apply_orchestrator_patches(orch, monkeypatch):
+    class _DummyToolCall:
+        def __init__(self, tool_name, tool_args):
+            self.tool_name = tool_name
+            self.tool_args = tool_args
+
+        def to_legacy(self):
+            return {"tool_name": self.tool_name, "tool_args": self.tool_args}
+
+    class _DummyDevResult:
+        def __init__(self, success, output, tool_calls):
+            self.success = success
+            self.output = output
+            self.tool_calls = tool_calls
+
     async def fake_run_developer_agent(task):
         # Create a file to simulate work
         file_path = os.path.join(orch.project_dir, "hello.txt")
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
         with open(file_path, "w", encoding="utf-8") as f:
             f.write("hello")
-        tool_calls = [{"tool_name": "write_file", "tool_args": {"filename": "hello.txt"}}]
-        return True, "ok", tool_calls
+        tool_calls = [_DummyToolCall("write_file", {"filename": "hello.txt"})]
+        return _DummyDevResult(True, "ok", tool_calls)
 
     monkeypatch.setattr(orch, "_run_developer_agent", fake_run_developer_agent)
     monkeypatch.setattr(orch, "_get_project_diff", lambda: "")
@@ -285,7 +299,16 @@ def _apply_orchestrator_patches(orch, monkeypatch):
     monkeypatch.setattr(orch, "_init_execution_agents", init_execution_agents)
 
 
-def test_orchestrator_smoke_mocked(tmp_path, monkeypatch):
+def _mk_tmp_dir(name: str) -> Path:
+    base = ROOT / ".test_tmp"
+    base.mkdir(exist_ok=True)
+    d = base / name
+    d.mkdir(exist_ok=True)
+    return d
+
+
+def test_orchestrator_smoke_mocked(monkeypatch):
+    tmp_path = _mk_tmp_dir("orch_smoke")
     monkeypatch.chdir(tmp_path)
 
     project_name = "smoke_project"
@@ -322,7 +345,8 @@ def test_orchestrator_smoke_mocked(tmp_path, monkeypatch):
     assert state["last_completed_task_index"] >= 0
 
 
-def test_orchestrator_integration_minimal(tmp_path, monkeypatch):
+def test_orchestrator_integration_minimal(monkeypatch):
+    tmp_path = _mk_tmp_dir("orch_integration")
     monkeypatch.chdir(tmp_path)
 
     project_name = "integration_project"
