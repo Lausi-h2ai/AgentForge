@@ -36,6 +36,7 @@ if _ORCH_CONTRACTS_ROOT.exists():
         sys.path.insert(0, _contracts_path)
 
 from contracts.execution import DeveloperRunResult, ReviewRunResult
+from pipeline import StageContext, execute_planning_stage
 
 # Review timeout configuration (seconds)
 REVIEW_TIMEOUT_CONFIG = {
@@ -1435,149 +1436,10 @@ class Orchestrator:
         Main orchestration loop with enhanced error handling and rollback
         """
         project_completed_successfully = False
+        clarified_prompt = self.user_prompt
         
         try:
-            if self.is_resuming and self._has_valid_saved_state():
-                print("\nResuming from saved state. Skipping requirements, architecture, and planning.")
-                clarified_prompt = self.user_prompt
-            else:
-                if self.is_resuming:
-                    print("\nSaved state incomplete or invalid. Re-running requirements, architecture, and planning.")
-                # --- Phase 1: Requirements Analysis ---
-                self.logger.log_phase("Requirements Analysis")
-                print("\n=== Phase 1: Requirements Analysis ===")
-
-                req_memory = self._get_memory_context(
-                    self.user_prompt,
-                    agent_name="RequirementsAnalystAgent"
-                )
-                requirements_output = self.requirements_agent.analyze_requirements(
-                    self.user_prompt, req_memory
-                )
-                self.cost_tracker.calculate_and_print_cost(self.model_name)
-
-                # Extract refined prompt
-                clarified_prompt = requirements_output.get("refined_prompt", self.user_prompt)
-                if not isinstance(clarified_prompt, str):
-                    try:
-                        clarified_prompt = json.dumps(clarified_prompt, ensure_ascii=False, indent=2)
-                    except Exception:
-                        clarified_prompt = str(clarified_prompt)
-
-                questions = requirements_output.get("questions", [])
-
-                if questions:
-                    print(f"\nRequirements analyst has {len(questions)} clarifying questions:")
-                    for i, q in enumerate(questions, 1):
-                        print(f"  {i}. {q}")
-                    clarification_notes = self._collect_clarifications(questions)
-                    if clarification_notes:
-                        clarified_prompt = (
-                            f"{clarified_prompt}\n\nCLARIFICATIONS:\n{clarification_notes}"
-                        )
-
-                # Save requirements
-                os.makedirs(self.project_path, exist_ok=True)
-                with open(self.requirements_file, 'w', encoding='utf-8') as f:
-                    f.write(clarified_prompt)
-
-                print(f"Requirements analyzed and saved {clarified_prompt}")
-
-                self._remember_memory(
-                    content=self._truncate_text(clarified_prompt, 1800),
-                    agent_name="RequirementsAnalystAgent",
-                    memory_type="context",
-                    tags=["phase:requirements", f"project:{self.project_name}"],
-                    importance=0.7,
-                )
-
-                # Use full specification to avoid losing requirements in planning
-                planning_prompt = clarified_prompt
-                if self.user_prompt and self.user_prompt not in clarified_prompt:
-                    planning_prompt = f"{clarified_prompt}\n\nFULL SPECIFICATION:\n{self.user_prompt}"
-
-                # --- Phase 2: Architecture Design ---
-                self.logger.log_phase("Architecture Design")
-                print("\n=== Phase 2: Architecture Design ===")
-
-                arch_memory = self._get_memory_context(
-                    planning_prompt,
-                    agent_name="SoftwareArchitectAgent"
-                )
-                planning_prompt_with_memory = f"{planning_prompt}\n\n{arch_memory}"
-                architecture = self.architect_agent.design_architecture(
-                    planning_prompt_with_memory,
-                    self.logger
-                )
-                self.cost_tracker.calculate_and_print_cost(self.model_name)
-
-                if not architecture:
-                    raise ValueError("Architecture design failed")
-
-                self.technical_architecture = architecture
-                self.run_command = architecture.get("run_command", "")
-
-                print("Architecture designed")
-                print(f"   Stack: {architecture.get('technology_stack', 'Unknown')}")
-                print(f"   Files: {len(architecture.get('file_structure', []))}")
-
-                try:
-                    arch_summary = {
-                        "technology_stack": architecture.get("technology_stack"),
-                        "run_command": architecture.get("run_command"),
-                        "file_count": len(architecture.get("file_structure", [])),
-                    }
-                    self._remember_memory(
-                        content=self._truncate_text(json.dumps(arch_summary, ensure_ascii=False), 1200),
-                        agent_name="SoftwareArchitectAgent",
-                        memory_type="context",
-                        tags=["phase:architecture", f"project:{self.project_name}"],
-                        importance=0.7,
-                    )
-                except Exception:
-                    pass
-
-                # --- Phase 3: Planning ---
-                self.logger.log_phase("Task Planning")
-                print("\n=== Phase 3: Task Planning ===")
-
-                plan_memory = self._get_memory_context(
-                    planning_prompt,
-                    agent_name="SADTSARTPlannerAgent"
-                )
-                planning_prompt_with_memory = f"{planning_prompt}\n\n{plan_memory}"
-
-                # Try SADT planner if available, fallback to simple planning
-                if self.sadt_sart_agent:
-                    try:
-                        self.plan, run_cmd_from_plan = self.sadt_sart_agent.create_plan(
-                            planning_prompt_with_memory,
-                            architecture,
-                            self.logger
-                        )
-                        self.sadt_plan = list(self.plan)
-                        self.planner_source = "sadt"
-                        if run_cmd_from_plan:
-                            self.run_command = run_cmd_from_plan
-                    except Exception as e:
-                        print(f"SADT planner failed: {e}, using simple planner")
-                        self.plan = self._create_simple_plan(architecture)
-                        self.sadt_plan = None
-                        self.planner_source = "simple"
-                else:
-                    self.plan = self._create_simple_plan(architecture)
-                    self.sadt_plan = None
-                    self.planner_source = "simple"
-
-                self.cost_tracker.calculate_and_print_cost(self.model_name)
-
-                if not self.plan:
-                    raise ValueError("Planning failed - no tasks generated")
-
-                print(f"Plan created with {len(self.plan)} tasks")
-
-                # Initialize progress tracker
-                self.progress_tracker = ProgressTracker(len(self.plan))
+            clarified_prompt = execute_planning_stage(StageContext(self))
 
             # Ensure execution agents are initialized with execution model
             if not self.dev_agent or not self.reviewer_agent:
