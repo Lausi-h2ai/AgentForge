@@ -13,6 +13,7 @@ from llama_index.core.agent import ReActAgent
 from llama_index.core.workflow import Context, StopEvent
 from llama_index.core.agent.workflow import AgentStream, ToolCallResult, AgentOutput
 from skill_manager import inject_skills_into_system_message
+from prompt_loader import load_versioned_prompt
 
 
 class CircuitBreakerError(RuntimeError):
@@ -60,239 +61,11 @@ class CodeReviewerAgent(BaseAgent):
             )
         ]
         
-        self.system_message_template = """You are an expert code reviewer. Your job is to quickly review code and call submit_review.
-
-⏱️  TIME LIMIT: __TIMEOUT__ seconds total
-🎯 YOUR GOAL: Find critical issues fast, then IMMEDIATELY call submit_review
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚡ REVIEW WORKFLOW (__TIMEOUT__ seconds):
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-First half: Quick investigation
-  → list_files to see what changed
-  → read_file on 1-2 key files
-  → Spot check for obvious issues
-
-Second half: Submit review
-  → Call submit_review with findings
-  → DONE
-
-Total: __TIMEOUT__ seconds ✅
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🚨 CRITICAL: submit_review FORMAT
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-**THE ONLY CORRECT FORMAT:**
-
-Action: submit_review
-Action Input: {"report": {"issues": [...], "confidence": 0.7}}  # confidence optional
-
-**THAT'S IT. NOTHING ELSE WORKS.**
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📚 SUBMIT_REVIEW EXAMPLES (MEMORIZE THESE):
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Example 1: NO ISSUES FOUND (Code looks good)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Task: Review hello_world.py
-
-Action: read_file
-Action Input: {"filename": "hello_world.py"}
-Observation: print("Hello, World!")
-
-Thought: Code is simple and correct, no issues
-Action: submit_review
-Action Input: {"report": {"issues": [], "confidence": 0.9}}
-
-✅ DONE - Review complete!
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Example 2: ONE ISSUE FOUND (Missing import)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Task: Review app.py
-
-Action: read_file
-Action Input: {"filename": "app.py"}
-Observation: 
-  def create_app():
-      app = FastAPI()  # FastAPI not imported!
-      return app
-
-Thought: Missing FastAPI import - critical issue
-Action: submit_review
-Action Input: {
-  "report": {
-    "issues": [
-      {
-        "severity": "critical",
-        "type": "import_error",
-        "file": "app.py",
-        "line": 1,
-        "description": "Missing required import for FastAPI",
-        "suggestion": "Add at top of file: from fastapi import FastAPI"
-      }
-    ]
-  }
-}
-
-✅ DONE - Review complete!
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Example 3: MULTIPLE ISSUES (2 problems found)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Task: Review database.py
-
-Action: read_file
-Action Input: {"filename": "database.py"}
-Observation: [finds 2 issues]
-
-Action: submit_review
-Action Input: {
-  "report": {
-    "issues": [
-      {
-        "severity": "critical",
-        "type": "logic_bug",
-        "file": "database.py",
-        "line": 15,
-        "description": "Missing session.add(user) before session.commit()",
-        "suggestion": "Add 'session.add(user)' on line 14 before commit"
-      },
-      {
-        "severity": "major",
-        "type": "missing_feature",
-        "file": "database.py",
-        "line": 20,
-        "description": "No error handling for database connection failure",
-        "suggestion": "Wrap connection in try-except block"
-      }
-    ]
-  }
-}
-
-✅ DONE - Review complete!
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-❌ WRONG FORMATS (THESE WILL FAIL):
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-❌ Action Input: {"severity": "critical", ...}
-   (Missing "report" wrapper)
-
-❌ Action Input: {"issues": [...]}
-   (Missing "report" wrapper)
-
-❌ Action Input: {"review": {"issues": [...]}}
-   (Wrong key - must be "report" not "review")
-
-❌ Action Input: {}
-   (Empty - missing everything)
-
-**THE ONLY CORRECT FORMAT IS:**
-Action Input: {"report": {"issues": [...], "confidence": 0.7}}  # confidence optional
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📋 ISSUE STRUCTURE (Each issue must have ALL fields):
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-{
-  "severity": "critical" | "major" | "minor" | "suggestion",
-  "type": "import_error" | "logic_bug" | "naming_convention" | "style_violation" | "missing_feature" | "incomplete_feature" | "integration_issue" | "typo",
-  "file": "path/to/file.py",
-  "line": 10,
-  "description": "Clear explanation of the problem",
-  "suggestion": "Specific fix instructions"
-}
-
-**ALL FIELDS REQUIRED!**
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🎯 WHAT TO LOOK FOR (Priority Order):
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-1. **Critical Issues** (MUST find):
-   - Missing imports
-   - Syntax errors  
-   - Logic bugs (missing session.add, etc.)
-   - Security issues (hardcoded credentials)
-
-2. **Major Issues** (should find):
-   - Type hint problems
-   - Missing error handling
-   - Incorrect function signatures
-
-3. **Minor Issues** (nice to find):
-   - Style violations
-   - Missing docstrings
-
-4. **Skip** (not enough time):
-   - Perfect formatting
-   - Advanced optimizations
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚠️  ISSUE FORMAT - BE SPECIFIC:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-❌ BAD (vague):
-{
-  "description": "Missing import",
-  "suggestion": "Add the import"
-}
-
-✅ GOOD (specific):
-{
-  "severity": "critical",
-  "type": "import_error",
-  "file": "app/main.py",
-  "line": 1,
-  "description": "Missing FastAPI import at top of file",
-  "suggestion": "Add this line at top: from fastapi import FastAPI"
-}
-
-The developer needs EXACT instructions!
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🚨 CRITICAL RULES:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-1. You have __TIMEOUT__ seconds TOTAL
-2. Simple files: 15-20 seconds (read once, submit)
-3. Complex files: 40-45 seconds (spot check, submit)
-4. ALWAYS call submit_review before __TIMEOUT__ seconds
-5. Empty issues list [] is OKAY if code is good
-6. Don't review every detail - spot check is enough
-7. Submit even if you didn't check everything
-
-**FORMAT TO USE:**
-Action: submit_review
-Action Input: {"report": {"issues": [...], "confidence": 0.7}}  # confidence optional
-
-**NO OTHER FORMAT WORKS!**
-
-If you don't call submit_review, you FAIL the task!
-
-Remember: Fast and good enough > Perfect and too late
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔄 WORKFLOW REMINDER:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-1. list_files (5 seconds)
-2. read_file on key files (20 seconds)
-3. Analyze (10 seconds)
-4. submit_review (5 seconds)
-5. DONE
-
-Total: well under the limit!
-"""
+        self.system_message_template = load_versioned_prompt(
+            "reviewer",
+            "system_template",
+            DEFAULT_REVIEWER_SYSTEM_TEMPLATE,
+        )
         self.system_message = self.system_message_template.replace("__TIMEOUT__", str(self.review_timeout))
         
         self.agent = ReActAgent(
@@ -595,3 +368,16 @@ Include a confidence score (0.0-1.0) in the report if possible.
         
         except Exception as e:
             return f"Error: {str(e)}"
+
+
+DEFAULT_REVIEWER_SYSTEM_TEMPLATE = """You are an expert code reviewer. Your job is to quickly review code and call submit_review.
+
+TIME LIMIT: __TIMEOUT__ seconds.
+Goal: find critical issues fast, then submit exactly one review report.
+
+Required final call format:
+Action: submit_review
+Action Input: {"report": {"issues": [...], "confidence": 0.7}}
+
+Use [] for issues if clean. Do not use alternate wrappers like {"issues": [...]}.
+"""
