@@ -28,6 +28,15 @@ from pathlib import Path
 from skill_manager import SkillManager
 from memory import MemoryManager
 
+# Contracts live under orchestrator/contracts while this file remains top-level.
+_ORCH_CONTRACTS_ROOT = Path(__file__).resolve().parent / "orchestrator"
+if _ORCH_CONTRACTS_ROOT.exists():
+    _contracts_path = str(_ORCH_CONTRACTS_ROOT)
+    if _contracts_path not in sys.path:
+        sys.path.insert(0, _contracts_path)
+
+from contracts.execution import DeveloperRunResult, ReviewRunResult
+
 # Review timeout configuration (seconds)
 REVIEW_TIMEOUT_CONFIG = {
     "simple": 60,
@@ -577,7 +586,7 @@ class Orchestrator:
         return text[:max_len] + "..."
         
 
-    async def _run_developer_agent(self, task_description):
+    async def _run_developer_agent(self, task_description) -> DeveloperRunResult:
         """Run developer with relevant skills injected."""
         
         # Inject relevant skills into system message (without mutating the base prompt permanently)
@@ -594,7 +603,7 @@ class Orchestrator:
                 task_description,
                 system_prompt=injected_prompt
             )
-            return success, dev_output, tool_calls
+            return DeveloperRunResult.from_legacy(success, dev_output, tool_calls)
         finally:
             self.dev_agent.agent.system_prompt = original_prompt
     
@@ -1671,7 +1680,10 @@ class Orchestrator:
                     )
 
                     # Execute development
-                    success, dev_output, tool_calls = await self._run_developer_agent(enhanced_task)
+                    dev_result = await self._run_developer_agent(enhanced_task)
+                    success = dev_result.success
+                    dev_output = dev_result.output
+                    tool_calls = [tc.to_legacy() for tc in dev_result.tool_calls]
 
                     # 🆕 Record completion in conversation
                     orchestrator_conv.add_message(
@@ -1768,12 +1780,15 @@ class Orchestrator:
                     review_memory = self._get_memory_context(task, agent_name="CodeReviewerAgent")
                     review_tool_memory = self._get_memory_context("tool usage rules", agent_name="CodeReviewerAgent")
                     review_task = f"{task}\n\n{review_memory}{review_tool_memory}"
-                    issues, review_history = await self.reviewer_agent.review_code(
+                    raw_issues, raw_review_history = await self.reviewer_agent.review_code(
                         review_task,
                         project_structure,
                         git_diff,
                         checkpoint.review_feedback
                     )
+                    review_result = ReviewRunResult.from_legacy(raw_issues, raw_review_history)
+                    issues = review_result.issues
+                    review_history = review_result.history
 
                     # 🆕 Store reviewer's findings in conversation
                     if issues:
