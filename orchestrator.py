@@ -24,20 +24,12 @@ from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from pathlib import Path
 from skill_manager import SkillManager
 from memory import MemoryManager
 
-# Contracts live under orchestrator/contracts while this file remains top-level.
-_ORCH_CONTRACTS_ROOT = Path(__file__).resolve().parent / "orchestrator"
-if _ORCH_CONTRACTS_ROOT.exists():
-    _contracts_path = str(_ORCH_CONTRACTS_ROOT)
-    if _contracts_path not in sys.path:
-        sys.path.insert(0, _contracts_path)
-
-from contracts.execution import DeveloperRunResult
-from blackboard import BlackboardState
-from pipeline import (
+from orchestrator_core.contracts.execution import DeveloperRunResult
+from orchestrator_core.blackboard import BlackboardState
+from orchestrator_core.pipeline import (
     StageContext,
     execute_development_stage,
     execute_finalization_stage,

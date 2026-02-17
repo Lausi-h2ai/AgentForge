@@ -5,12 +5,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-ORCH_DIR = ROOT / "orchestrator"
-if str(ORCH_DIR) not in sys.path:
-    sys.path.insert(0, str(ORCH_DIR))
 
 from orchestrator import Orchestrator
-from blackboard import BlackboardState
+from orchestrator_core.blackboard import BlackboardState
 
 
 def test_orchestrator_properties_proxy_to_blackboard():

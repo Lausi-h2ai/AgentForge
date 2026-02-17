@@ -6,14 +6,13 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PIPELINE_ROOT = ROOT / "orchestrator"
-if str(PIPELINE_ROOT) not in sys.path:
-    sys.path.insert(0, str(PIPELINE_ROOT))
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-from pipeline.context import StageContext
-from pipeline.development_stage import execute_development_stage
-from pipeline.finalization_stage import execute_finalization_stage
-from pipeline.testing_stage import execute_testing_stage
+from orchestrator_core.pipeline.context import StageContext
+from orchestrator_core.pipeline.development_stage import execute_development_stage
+from orchestrator_core.pipeline.finalization_stage import execute_finalization_stage
+from orchestrator_core.pipeline.testing_stage import execute_testing_stage
 
 
 @dataclass
