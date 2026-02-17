@@ -82,3 +82,12 @@ Smart Pantry & Recipe App (Paintroo): a single-user MVP that manages pantry item
 - Orchestrator now injects memory context into requirements, architecture, planning, developer, and reviewer prompts.
 - Memory writes on requirements/architecture, task completion summaries, and retry failures to reduce repeated errors and invalid tool calls.
 - Default local configuration expects Qdrant at `http://localhost:6333` and Ollama model `gemma3:4b`.
+
+## Memory (2026-02-17) - Orchestrator Core + Prompt/Config Cleanup
+- Renamed internal orchestration package from `orchestrator/` to `orchestrator_core/` to remove import ambiguity and eliminate runtime `sys.path` hacks.
+- `orchestrator.py` now imports typed contracts, blackboard state, and pipeline stages via explicit package imports:
+  `orchestrator_core.contracts`, `orchestrator_core.blackboard`, `orchestrator_core.pipeline`.
+- Reviewer timeout values moved to environment-driven config:
+  `REVIEW_TIMEOUT_SIMPLE`, `REVIEW_TIMEOUT_MEDIUM`, `REVIEW_TIMEOUT_COMPLEX` (with sane defaults).
+- Prompt v2 set expanded with compact example blocks in each file to improve reliability without reintroducing long-prompt failure patterns.
+- Strengthened role headers in v2 prompts for developer/reviewer/requirements/architect/planner to improve output quality and consistency.
