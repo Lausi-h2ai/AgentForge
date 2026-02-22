@@ -5,6 +5,7 @@ from .development_stage import DevelopmentStageResult, execute_development_stage
 from .finalization_stage import execute_finalization_stage
 from .planning_stage import execute_planning_stage
 from .review_stage import ReviewStageResult, execute_review_stage
+from .task_escalation import TaskEscalationPolicy, TaskEscalationState
 from .testing_stage import TestingStageResult, execute_testing_stage
 
 __all__ = [
@@ -15,6 +16,8 @@ __all__ = [
     "execute_planning_stage",
     "ReviewStageResult",
     "execute_review_stage",
+    "TaskEscalationPolicy",
+    "TaskEscalationState",
     "TestingStageResult",
     "execute_testing_stage",
 ]

@@ -556,64 +556,61 @@ Organize by feature/component area. No installation/execution tasks."""
 
             plan = self._extract_and_parse_json(response_str, logger)
 
-            if plan and self._validate_workplan(plan, logger, max_tasks, depth_limit, max_subtask_depth):
-                # Reject plans that include placeholder/stub tasks
-                if self._contains_placeholder_tasks(plan):
-                    if logger:
-                        logger.log("WARNING", "Plan contains placeholder/stub tasks. Retrying.")
-                    prompt += "\n\n**PREVIOUS ATTEMPT FAILED - PLACEHOLDER/STUB TASKS DETECTED:**\nDo NOT create empty files or placeholder/stub/TODO tasks. Every task must produce real, complete code."
-                    continue
+            if not plan:
+                if logger:
+                    logger.log("WARNING", f"Attempt {attempt+1} failed validation")
+                prompt += f"\n\n**ATTEMPT {attempt+1} FAILED: Invalid JSON**\nEnsure valid JSON format."
+                continue
 
-                # Ensure required topics from the prompt are covered
-                missing_topics = self._check_required_topics(plan, project_context)
-                if missing_topics:
-                    missing_summary = ", ".join(missing_topics)
-                    if logger:
-                        logger.log("WARNING", f"Plan missing required topics: {missing_summary}")
-                    prompt += f"\n\n**PREVIOUS ATTEMPT FAILED - MISSING REQUIRED TOPICS:**\nYou MUST include tasks covering: {missing_summary}."
-                    continue
+            validation_errors = self._collect_plan_validation_errors(
+                plan=plan,
+                project_context=project_context,
+                max_tasks=max_tasks,
+                depth_limit=depth_limit,
+                max_subtask_depth=max_subtask_depth,
+                logger=logger,
+            )
 
-                # Check for impossible tasks
-                has_impossible, error_messages = self._contains_impossible_tasks(plan, logger)
-
-                if has_impossible:
-                    error_summary = "\n".join([f" - {msg}" for msg in error_messages])
-
-                    if logger:
-                        logger.log("WARNING", f"❌ Plan contains impossible tasks:\n{error_summary}")
-
-                    print(f"\n❌ Plan rejected (attempt {attempt+1}): Contains impossible tasks")
-                    print(error_summary)
-
-                    # Give specific feedback for retry
-                    prompt += f"\n\n**PREVIOUS ATTEMPT FAILED - IMPOSSIBLE TASKS DETECTED:**\n{error_summary}\n\nREMOVE these tasks. Agents can only CREATE/MODIFY/READ/DELETE files. They CANNOT execute commands or run applications."
-
-                    continue
-
-                # Plan is good!
+            if not validation_errors:
                 if logger:
                     logger.log("INFO", f"✅ Valid workplan generated on attempt {attempt + 1}")
-
                 total_tasks = len(plan.get('tasks', []))
                 total_subtasks = sum(len(t.get('subtasks', [])) for t in plan.get('tasks', []))
                 print(f"✅ Plan accepted: {total_tasks} top-level tasks, {total_subtasks} subtasks")
-
                 return plan
 
-            # Plan validation failed
             if logger:
                 logger.log("WARNING", f"Attempt {attempt+1} failed validation")
 
-            if not plan:
-                prompt += f"\n\n**ATTEMPT {attempt+1} FAILED: Invalid JSON**\nEnsure valid JSON format."
-            else:
-                missing_keys = [k for k in ["project_title", "context", "tasks"] if k not in plan]
+            # First try deterministic correction using the current plan instead of full regeneration.
+            corrected_plan = None
+            if attempt < max_retries - 1:
+                corrected_plan = self._attempt_plan_correction(
+                    project_title=project_title,
+                    project_context=project_context,
+                    complexity=complexity,
+                    existing_plan=plan,
+                    validation_errors=validation_errors,
+                    system_message=system_message,
+                    max_tasks=max_tasks,
+                    depth_limit=depth_limit,
+                    max_subtask_depth=max_subtask_depth,
+                    logger=logger,
+                )
 
-                if missing_keys:
-                    prompt += f"\n\n**ATTEMPT {attempt+1}: Missing keys {missing_keys}**"
+            if corrected_plan:
+                if logger:
+                    logger.log("INFO", f"✅ Corrected workplan accepted on attempt {attempt + 1}")
+                total_tasks = len(corrected_plan.get('tasks', []))
+                total_subtasks = sum(len(t.get('subtasks', [])) for t in corrected_plan.get('tasks', []))
+                print(f"✅ Plan accepted after correction: {total_tasks} top-level tasks, {total_subtasks} subtasks")
+                return corrected_plan
 
-                elif len(plan.get("tasks", [])) > max_tasks:
-                    prompt += f"\n\n**ATTEMPT {attempt+1}: Too many tasks ({len(plan['tasks'])} > {max_tasks})**\nCombine related operations."
+            # Fallback: continue normal regeneration with explicit failure feedback.
+            prompt += f"\n\n**PREVIOUS ATTEMPT FAILED - VALIDATION ERRORS:**\n"
+            for err in validation_errors:
+                prompt += f"- {err}\n"
+            prompt += "\nRegenerate a complete valid plan that fixes all errors."
 
         if logger:
             logger.log("ERROR", "❌ Failed to generate valid workplan after all attempts")
@@ -621,6 +618,96 @@ Organize by feature/component area. No installation/execution tasks."""
         print(f"\n❌ Plan generation failed after {max_retries} attempts")
 
         return None
+
+    def _collect_plan_validation_errors(
+        self,
+        plan: dict,
+        project_context: str,
+        max_tasks: int,
+        depth_limit: int,
+        max_subtask_depth: int,
+        logger=None,
+    ) -> List[str]:
+        errors: List[str] = []
+
+        if not self._validate_workplan(plan, logger, max_tasks, depth_limit, max_subtask_depth):
+            errors.append("Structural validation failed (required fields/types/depth/limits).")
+            missing_keys = [k for k in ["project_title", "context", "tasks"] if k not in plan]
+            if missing_keys:
+                errors.append(f"Missing required keys: {missing_keys}")
+            if isinstance(plan, dict) and isinstance(plan.get("tasks"), list) and len(plan["tasks"]) > max_tasks:
+                errors.append(f"Too many tasks ({len(plan['tasks'])} > {max_tasks})")
+            return errors
+
+        if self._contains_placeholder_tasks(plan):
+            errors.append("Plan contains placeholder/stub/TODO tasks.")
+
+        missing_topics = self._check_required_topics(plan, project_context)
+        if missing_topics:
+            errors.append(f"Plan missing required topics: {', '.join(missing_topics)}")
+
+        has_impossible, impossible_errors = self._contains_impossible_tasks(plan, logger)
+        if has_impossible:
+            errors.extend(impossible_errors or ["Plan contains impossible tasks."])
+
+        return errors
+
+    def _attempt_plan_correction(
+        self,
+        project_title: str,
+        project_context: str,
+        complexity: str,
+        existing_plan: dict,
+        validation_errors: List[str],
+        system_message: str,
+        max_tasks: int,
+        depth_limit: int,
+        max_subtask_depth: int,
+        logger=None,
+    ) -> dict | None:
+        correction_prompt = f"""PROJECT: {project_title}
+
+CONTEXT:
+
+{project_context}
+
+COMPLEXITY: {complexity.upper()}
+
+You previously generated a plan that is close but invalid.
+Fix ONLY the listed validation errors while preserving valid task IDs/titles/order where possible.
+
+VALIDATION ERRORS:
+{chr(10).join(f"- {e}" for e in validation_errors)}
+
+EXISTING PLAN (JSON):
+{json.dumps(existing_plan, ensure_ascii=False, indent=2)}
+
+Output ONLY the full corrected JSON plan with keys: project_title, context, tasks.
+Do not output markdown.
+"""
+
+        if logger:
+            logger.log("INFO", "Attempting plan correction using existing plan context.")
+
+        corrected_response = self._call_llm(system_message, correction_prompt, logger)
+        corrected_plan = self._extract_and_parse_json(corrected_response, logger)
+        if not corrected_plan:
+            return None
+
+        remaining_errors = self._collect_plan_validation_errors(
+            plan=corrected_plan,
+            project_context=project_context,
+            max_tasks=max_tasks,
+            depth_limit=depth_limit,
+            max_subtask_depth=max_subtask_depth,
+            logger=logger,
+        )
+        if remaining_errors:
+            if logger:
+                logger.log("WARNING", f"Corrected plan still invalid: {'; '.join(remaining_errors[:4])}")
+            return None
+
+        return corrected_plan
 
     def generate_atomic_actions_for_task(self, task, complexity="medium", logger=None, max_actions_override=None):
         """

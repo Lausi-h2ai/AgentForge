@@ -16,6 +16,7 @@ This project implements a multi?agent AI system designed to autonomously develop
 - **Skills System:** `SkillManager` loads `skills/*/SKILL.md` and injects relevant guidance per task to improve agent performance without bloating context.
 - **Dynamic Review Timeout:** Review timeouts scale with change complexity (files/diff size).
 - **Reviewer Guardrails:** Circuit breaker stops repeated tool loops; review output includes a confidence score; false?positive syntax errors are filtered.
+- **Task-Level Model Escalation:** Developer/reviewer tasks can automatically switch to a stronger model when retries show combined loop signals (repeat + no-progress).
 - **Phase?Based Models:** Use one model for planning and another for execution (sequentially, no dual?model VRAM load).
 - **RAG?Powered Context:** Uses LlamaIndex to provide relevant code context.
 - **Pluggable LLM Providers:** Switch between local (Ollama) and cloud (Google Gemini).
@@ -101,6 +102,21 @@ Reviewer timeout tuning:
 - `REVIEW_TIMEOUT_SIMPLE`
 - `REVIEW_TIMEOUT_MEDIUM`
 - `REVIEW_TIMEOUT_COMPLEX`
+
+Task-level escalation tuning:
+- `ESCALATION_ENABLED`
+- `ESCALATION_AGENTS` (default: `developer,reviewer`)
+- `ESCALATION_REPEAT_THRESHOLD` (default: `3`)
+- `ESCALATION_NO_PROGRESS_THRESHOLD` (default: `2`)
+- `ESCALATION_MODEL_OLLAMA`
+- `ESCALATION_MODEL_GOOGLE`
+
+Planner escalation tuning:
+- `PLANNER_ESCALATION_ENABLED`
+- `PLANNER_ESCALATION_FAILURE_THRESHOLD` (default: `1`)
+- `PLANNER_MAX_ATTEMPTS` (default: `2`)
+- `PLANNER_ESCALATION_MODEL_OLLAMA`
+- `PLANNER_ESCALATION_MODEL_GOOGLE`
 
 If no model is specified, the same model is used for all phases.
 

@@ -9,6 +9,7 @@ import asyncio
 import traceback
 import time
 import re
+import os
 from typing import List, Dict, Optional, Tuple
 from collections import defaultdict, deque
 from .base_agent import BaseAgent
@@ -67,6 +68,16 @@ class DeveloperAgent(BaseAgent):
                 description="See all files in project."
             ),
             FunctionTool.from_defaults(
+                fn=lambda query, top_k=5, max_chars=2000: orchestrator_tools.recall_memory(
+                    query=query,
+                    agent_name="DeveloperAgent",
+                    top_k=top_k,
+                    max_chars=max_chars,
+                ),
+                name="recall_memory",
+                description="Read-only: recall relevant project and agent memory context."
+            ),
+            FunctionTool.from_defaults(
                 fn=orchestrator_tools.delete_file,
                 name="delete_file",
                 description="Delete a file (PERMANENT)."
@@ -116,6 +127,50 @@ class DeveloperAgent(BaseAgent):
             max_iterations=20,  # Reduced from 30
             streaming=self.streaming
         )
+
+    @staticmethod
+    def _stream_looks_like_inflight_tool_call(stream_buffer: str) -> bool:
+        if not stream_buffer:
+            return False
+        lower = stream_buffer.lower()
+        if "action:" not in lower or "action input:" not in lower:
+            return False
+
+        # If Action Input appears to contain an opening JSON payload without a closing brace yet,
+        # treat it as in-flight and avoid premature no-tool circuit breaking.
+        idx = lower.rfind("action input:")
+        payload_tail = stream_buffer[idx:] if idx >= 0 else stream_buffer
+        open_braces = payload_tail.count("{")
+        close_braces = payload_tail.count("}")
+        if open_braces > close_braces:
+            return True
+        # Even when braces are balanced, recent Action/Input text indicates active tool formatting.
+        return True
+
+    def _should_abort_for_no_tool_calls(
+        self,
+        *,
+        elapsed: float,
+        stream_event_count: int,
+        tool_call_count: int,
+        stream_buffer: str,
+        timeout_seconds: int,
+        max_stream_events: int,
+        min_elapsed_for_event_guard: int,
+    ) -> bool:
+        if tool_call_count > 0:
+            return False
+        if elapsed > timeout_seconds:
+            return True
+        if max_stream_events <= 0:
+            return False
+        if elapsed <= min_elapsed_for_event_guard:
+            return False
+        if stream_event_count <= max_stream_events:
+            return False
+        if self._stream_looks_like_inflight_tool_call(stream_buffer):
+            return False
+        return True
     
     async def run(
         self,
@@ -188,8 +243,11 @@ Fix the issues mentioned above."""
         action_signature_streak = 0
         last_action_signature = None
         stream_buffer = ""
-        no_tool_call_timeout_seconds = 45
-        no_tool_call_max_stream_events = 140
+        no_tool_call_timeout_seconds = int(os.getenv("DEV_NO_TOOL_CALL_TIMEOUT_SECONDS", "45"))
+        no_tool_call_max_stream_events = int(os.getenv("DEV_NO_TOOL_CALL_MAX_STREAM_EVENTS", "0"))
+        no_tool_call_event_guard_min_elapsed_seconds = int(
+            os.getenv("DEV_NO_TOOL_CALL_EVENT_GUARD_MIN_ELAPSED_SECONDS", "8")
+        )
         
         if self.streaming:
             try:
@@ -300,11 +358,18 @@ Fix the issues mentioned above."""
                                 print("\n[Developer] CIRCUIT BREAKER: Repeated Action signature without any tool execution.")
                                 return False, "Agent repeating identical Action/Action Input without invoking tools", tool_calls
 
-                        if len(tool_calls) == 0:
-                            elapsed = time.monotonic() - run_start
-                            if elapsed > no_tool_call_timeout_seconds or stream_event_count > no_tool_call_max_stream_events:
-                                print("\n🛑 CIRCUIT BREAKER: No tool calls executed within safety window.")
-                                return False, "No tool calls executed (timeout/iteration guard)", tool_calls
+                        elapsed = time.monotonic() - run_start
+                        if self._should_abort_for_no_tool_calls(
+                            elapsed=elapsed,
+                            stream_event_count=stream_event_count,
+                            tool_call_count=len(tool_calls),
+                            stream_buffer=stream_buffer,
+                            timeout_seconds=no_tool_call_timeout_seconds,
+                            max_stream_events=no_tool_call_max_stream_events,
+                            min_elapsed_for_event_guard=no_tool_call_event_guard_min_elapsed_seconds,
+                        ):
+                            print("\n🛑 CIRCUIT BREAKER: No tool calls executed within safety window.")
+                            return False, "No tool calls executed (timeout/iteration guard)", tool_calls
                 
                 print(f"\n[Developer] ✅ Used {len(tool_calls)} tools")
                 

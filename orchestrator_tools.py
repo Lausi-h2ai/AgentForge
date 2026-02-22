@@ -114,12 +114,25 @@ class OrchestratorTools:
 
     def add_code_block(
         self,
-        filepath: str,
-        new_code: str,
+        filepath: str = None,
+        new_code: str = None,
         location: str = "end_of_file",
-        target_name: str = None
+        target_name: str = None,
+        properties: Optional[Dict[str, Any]] = None,
     ) -> dict:
         """Add code block at semantic location."""
+        if properties and isinstance(properties, dict):
+            filepath = filepath or properties.get("filepath")
+            new_code = new_code or properties.get("new_code")
+            location = properties.get("location", location)
+            target_name = properties.get("target_name", target_name)
+
+        if not filepath or new_code is None:
+            return {
+                "success": False,
+                "error": "add_code_block requires filepath and new_code",
+            }
+
         filename = self._validate_file_path(filepath)
         filepath = os.path.join(self.orchestrator.project_dir, filename)
         if not os.path.exists(filepath):
@@ -128,6 +141,44 @@ class OrchestratorTools:
                 "error": f"File {filename} does not exist, use tool write_file instead",
             }
         return _add_code_block(filepath, new_code, location, target_name)
+
+    def recall_memory(
+        self,
+        query: str,
+        agent_name: Optional[str] = None,
+        top_k: int = 5,
+        max_chars: int = 2000,
+    ) -> dict:
+        """
+        Read-only memory recall for agent context.
+        Returns relevant memory context text for the provided query.
+        """
+        if not query or not str(query).strip():
+            return {"success": False, "error": "Query is required for recall_memory."}
+
+        memory = getattr(self.orchestrator, "memory", None)
+        if not memory or not getattr(memory, "enabled", False):
+            return {"success": False, "error": "Memory unavailable or disabled."}
+
+        project_name = getattr(self.orchestrator, "project_name", None)
+        if not project_name:
+            return {"success": False, "error": "Project context is unavailable for memory recall."}
+
+        try:
+            context = memory.recall_combined(
+                query=query,
+                project_name=project_name,
+                agent_name=agent_name,
+                top_k=top_k,
+                max_chars=max_chars,
+            )
+            return {
+                "success": True,
+                "memory_context": context or "",
+                "message": "Memory recall complete.",
+            }
+        except Exception as e:
+            return {"success": False, "error": f"Memory recall failed: {str(e)}"}
 
     def refactor_rename_symbol(
         self,

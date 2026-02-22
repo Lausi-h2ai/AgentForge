@@ -31,6 +31,8 @@ from orchestrator_core.contracts.execution import DeveloperRunResult
 from orchestrator_core.blackboard import BlackboardState
 from orchestrator_core.pipeline import (
     StageContext,
+    TaskEscalationPolicy,
+    TaskEscalationState,
     execute_development_stage,
     execute_finalization_stage,
     execute_planning_stage,
@@ -407,6 +409,20 @@ class Orchestrator:
         self.architecture_violations: List[Dict] = []
         self.progress_tracker = None  # Initialized when plan is ready
         self.is_resuming = False
+        self.default_execution_model = self.execution_model
+        self.active_execution_model = self.execution_model
+        self.default_planning_model = self.planning_model
+        self.active_planning_model = self.planning_model
+        self.planning_escalation_enabled = os.getenv("PLANNER_ESCALATION_ENABLED", "false").lower() == "true"
+        self.planning_escalation_failure_threshold = _env_int("PLANNER_ESCALATION_FAILURE_THRESHOLD", 1)
+        self.planning_max_attempts = _env_int("PLANNER_MAX_ATTEMPTS", 2)
+        self.planning_escalation_models = {
+            "ollama": (os.getenv("PLANNER_ESCALATION_MODEL_OLLAMA") or "").strip(),
+            "google": (os.getenv("PLANNER_ESCALATION_MODEL_GOOGLE") or "").strip(),
+        }
+        self.planning_escalation_models = {k: v for k, v in self.planning_escalation_models.items() if v}
+        self.task_escalation_policy = TaskEscalationPolicy.from_env()
+        self.task_escalation_states: Dict[int, TaskEscalationState] = {}
         
         # --- 4. LOAD PROMPT ---
         if os.path.exists(self.requirements_file) and not force_new:
@@ -455,10 +471,12 @@ class Orchestrator:
         )
 
         # Initialize planning agents with planning model
-        self.po_agent = ProductOwnerAgent(self._llm_class, self._llm_args)
-        self.requirements_agent = RequirementsAnalystAgent(self._llm_class, self._llm_args)
-        self.architect_agent = SoftwareArchitectAgent(self._llm_class, self._llm_args)
-        self.doc_agent = DocumentationAgent(self._llm_class, self._llm_args)
+        self.po_agent = None
+        self.requirements_agent = None
+        self.architect_agent = None
+        self.doc_agent = None
+        self.sadt_sart_agent = None
+        self._init_planning_agents(self.planning_model)
 
         # Execution agents initialized later (after planning/model switch)
         self.dev_agent = None
@@ -472,14 +490,6 @@ class Orchestrator:
         # File verification is expensive; keep it on by default to avoid empty tool runs.
         self.enable_file_verification = os.getenv("ENABLE_FILE_VERIFICATION", "true").lower() == "true"
         
-        # Try to import SADT planner (optional)
-        try:
-            from agents import SADTSARTPlannerAgent
-            self.sadt_sart_agent = SADTSARTPlannerAgent(self._llm_class, self._llm_args)
-        except ImportError:
-            print("⚠️ SADTSARTPlannerAgent not available, using simple planner")
-            self.sadt_sart_agent = None
-
         # Seed tool-usage memory guidance (global + project scopes)
         self._seed_tool_usage_memory()
         
@@ -506,9 +516,39 @@ class Orchestrator:
 
         return llm_class, llm_args, token_counter
 
-    def _init_execution_agents(self):
-        """Initialize execution-phase agents using the execution model."""
-        llm_class, llm_args, _ = self._configure_llm(self.execution_model)
+    def _init_planning_agents(self, model_override: Optional[str] = None):
+        """Initialize planning-phase agents using a selected model."""
+        selected_model = model_override or self.planning_model
+        llm_class, llm_args, _ = self._configure_llm(selected_model)
+        self._llm_class = llm_class
+        self._llm_args = llm_args
+
+        self.po_agent = ProductOwnerAgent(self._llm_class, self._llm_args)
+        self.requirements_agent = RequirementsAnalystAgent(self._llm_class, self._llm_args)
+        self.architect_agent = SoftwareArchitectAgent(self._llm_class, self._llm_args)
+        self.doc_agent = DocumentationAgent(self._llm_class, self._llm_args)
+
+        try:
+            from agents import SADTSARTPlannerAgent
+            self.sadt_sart_agent = SADTSARTPlannerAgent(self._llm_class, self._llm_args)
+        except ImportError:
+            print("⚠️ SADTSARTPlannerAgent not available, using simple planner")
+            self.sadt_sart_agent = None
+
+        self.active_planning_model = selected_model
+
+    def _ensure_planning_model(self, model_override: Optional[str] = None) -> None:
+        selected_model = model_override or self.planning_model
+        if self.active_planning_model == selected_model:
+            return
+        self._init_planning_agents(selected_model)
+        if self.logger:
+            self.logger.log("INFO", f"Planning agents set to model: {selected_model}")
+
+    def _init_execution_agents(self, model_override: Optional[str] = None):
+        """Initialize execution-phase agents using a selected model."""
+        selected_model = model_override or self.execution_model
+        llm_class, llm_args, _ = self._configure_llm(selected_model)
         self._llm_class = llm_class
         self._llm_args = llm_args
 
@@ -516,9 +556,83 @@ class Orchestrator:
         self.reviewer_agent = CodeReviewerAgent(llm_class, llm_args, self.tools, self.logger, self.skill_manager)
         self.tester_agent = TesterAgent(llm_class, llm_args, self.project_dir) if self.run_tests_enabled else None
         self.unit_test_agent = UnitTestAgent(llm_class, llm_args)
+        self.active_execution_model = selected_model
 
         # Preserve base system prompt to avoid unbounded growth when injecting skills.
         self._dev_base_system_prompt = self.dev_agent.agent.system_prompt
+
+    def _normalize_retry_signature(self, retry_entry: Dict[str, Any]) -> str:
+        error_type = str((retry_entry or {}).get("error_type", "")).strip().lower()
+        return error_type or "unknown"
+
+    def _observe_task_retry_and_maybe_escalate(
+        self,
+        task_index: int,
+        checkpoint: TaskCheckpoint,
+        agent_name: str,
+    ) -> None:
+        if task_index not in self.task_escalation_states:
+            self.task_escalation_states[task_index] = self.task_escalation_policy.new_task_state()
+        state = self.task_escalation_states[task_index]
+        if not checkpoint.retry_history:
+            return
+
+        action_signature = self._normalize_retry_signature(checkpoint.retry_history[-1])
+        self.task_escalation_policy.observe_attempt(
+            state,
+            agent_name,
+            action_signature,
+            progress_made=False,
+        )
+
+        eligible = self.task_escalation_policy.should_escalate(state)
+        escalated = self.task_escalation_policy.try_escalate(
+            state,
+            provider=self.provider,
+            agent_name=agent_name,
+            attempt_number=checkpoint.retry_count + 1,
+        )
+        if escalated:
+            escalation_model = self.task_escalation_policy.resolve_model(
+                state,
+                provider=self.provider,
+                default_model=self.default_execution_model,
+            )
+            if self.logger:
+                self.logger.log(
+                    "WARNING",
+                    f"Task escalation triggered on task {task_index + 1} by {agent_name}: "
+                    f"repeat={state.repeat_count}, no_progress={state.no_progress_count}, model={escalation_model}",
+                )
+            print(
+                f"⚠️  Escalating task {task_index + 1} to stronger model "
+                f"(repeat={state.repeat_count}, no_progress={state.no_progress_count})"
+            )
+        elif eligible:
+            if self.logger:
+                self.logger.log(
+                    "WARNING",
+                    f"Task escalation eligible on task {task_index + 1}, but no escalation model configured "
+                    f"for provider '{self.provider}'",
+                )
+
+    def _resolve_task_model(self, task_index: int) -> Optional[str]:
+        state = self.task_escalation_states.get(task_index)
+        if not state:
+            return self.default_execution_model
+        return self.task_escalation_policy.resolve_model(
+            state,
+            provider=self.provider,
+            default_model=self.default_execution_model,
+        )
+
+    def _ensure_execution_model(self, model_override: Optional[str]) -> None:
+        selected_model = model_override or self.execution_model
+        if self.dev_agent and self.reviewer_agent and self.active_execution_model == selected_model:
+            return
+        self._init_execution_agents(selected_model)
+        if self.logger:
+            self.logger.log("INFO", f"Execution agents set to model: {selected_model}")
 
     def _inject_skills(self, base_message: str, task_description: str, 
                       agent_type: str) -> str:
@@ -585,7 +699,7 @@ class Orchestrator:
         for entry in review_history:
             result = str(entry.get("result", "")).lower()
             tool_name = str(entry.get("tool_name", "")).lower()
-            if tool_name not in ("list_files", "read_file", "get_code_summary", "directory_exists", "submit_review"):
+            if tool_name not in ("list_files", "read_file", "get_code_summary", "directory_exists", "recall_memory", "submit_review"):
                 continue
 
             structured = _extract_result_dict(entry.get("result"))
@@ -1565,6 +1679,8 @@ class Orchestrator:
             
             while current_task_index < len(self.plan):
                 task = self.plan[current_task_index]
+                if current_task_index not in self.task_escalation_states:
+                    self.task_escalation_states[current_task_index] = self.task_escalation_policy.new_task_state()
                 
                 # Start progress tracking
                 self.progress_tracker.start_task(current_task_index, task)
@@ -1594,6 +1710,8 @@ class Orchestrator:
                     checkpoint.status = TaskStatus.FAILED.value
                     self._save_checkpoint(checkpoint)
                     self.progress_tracker.complete_task(success=False)
+                    self.task_escalation_states.pop(current_task_index, None)
+                    self._ensure_execution_model(self.default_execution_model)
                     current_task_index += 1
                     continue
                 
@@ -1611,15 +1729,27 @@ class Orchestrator:
                         savepoint=savepoint,
                     )
                     # --- Development Phase ---
+                    self._ensure_execution_model(self._resolve_task_model(current_task_index))
                     dev_stage_result = await execute_development_stage(stage_ctx)
                     if dev_stage_result.should_retry:
+                        self._observe_task_retry_and_maybe_escalate(
+                            current_task_index,
+                            checkpoint,
+                            "DeveloperAgent",
+                        )
                         continue
 
                     # --- Review Phase ---
+                    self._ensure_execution_model(self._resolve_task_model(current_task_index))
                     review_stage_result = await execute_review_stage(stage_ctx)
                     issue_summary = review_stage_result.issue_summary
                     task = review_stage_result.updated_task
                     if review_stage_result.should_retry:
+                        self._observe_task_retry_and_maybe_escalate(
+                            current_task_index,
+                            checkpoint,
+                            "CodeReviewerAgent",
+                        )
                         continue
 
                     # --- Testing Phase (if enabled) ---
@@ -1682,6 +1812,8 @@ class Orchestrator:
                     
                     # Mark progress as complete
                     self.progress_tracker.complete_task(success=True)
+                    self.task_escalation_states.pop(current_task_index, None)
+                    self._ensure_execution_model(self.default_execution_model)
                     
                     current_task_index += 1
                 
@@ -1707,6 +1839,11 @@ class Orchestrator:
                     self._save_checkpoint(checkpoint)
                     
                     self.progress_tracker.complete_task(success=False)
+                    self._observe_task_retry_and_maybe_escalate(
+                        current_task_index,
+                        checkpoint,
+                        "DeveloperAgent",
+                    )
                     
                     # Don't increment - retry same task
             

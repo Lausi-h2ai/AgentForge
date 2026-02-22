@@ -207,8 +207,15 @@ from orchestrator import Orchestrator
 
 
 class DummyConversation:
+    def __init__(self):
+        self.history = []
+
     def add_message(self, role, message):
-        pass
+        self.history.append((role, message))
+
+    def get_summary(self, max_chars=800):
+        joined = "\n".join(f"{r}: {m}" for r, m in self.history)
+        return joined[:max_chars]
 
 
 class DummyAgent:
@@ -289,12 +296,13 @@ def _apply_orchestrator_patches(orch, monkeypatch):
     monkeypatch.setattr(orch, "_git_commit", lambda *a, **k: None)
     monkeypatch.setattr(orch, "_find_placeholders_in_files", lambda *a, **k: [])
 
-    def init_execution_agents():
+    def init_execution_agents(model_override=None):
         orch.dev_agent = DummyAgent()
         orch.reviewer_agent = DummyReviewer()
         orch.tester_agent = None
         orch.unit_test_agent = None
         orch._dev_base_system_prompt = ""
+        orch.active_execution_model = model_override or orch.execution_model
 
     monkeypatch.setattr(orch, "_init_execution_agents", init_execution_agents)
 
@@ -402,3 +410,85 @@ def test_contract_validators():
     review_report = {"issues": [], "confidence": 0.8}
     assert "issues" in review_report
     assert 0.0 <= review_report.get("confidence", 0.0) <= 1.0
+
+
+def test_task_model_escalation_switches_to_stronger_model(monkeypatch):
+    tmp_path = _mk_tmp_dir("orch_escalation")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ESCALATION_ENABLED", "true")
+    monkeypatch.setenv("ESCALATION_REPEAT_THRESHOLD", "3")
+    monkeypatch.setenv("ESCALATION_NO_PROGRESS_THRESHOLD", "2")
+    monkeypatch.setenv("ESCALATION_MODEL_OLLAMA", "strong-model")
+
+    project_name = "escalation_project"
+    prompt_path = tmp_path / "prompt.txt"
+    prompt_path.write_text("Escalation prompt", encoding="utf-8")
+
+    orch = Orchestrator(
+        project_name,
+        initial_prompt_file=str(prompt_path),
+        provider="ollama",
+        force_new=True,
+        run_tests=False,
+    )
+    orch.plan = ["[T1] Create hello.txt with greeting (Output: hello.txt created)"]
+    orch.technical_architecture = {
+        "technology_stack": "Test",
+        "file_structure": ["hello.txt"],
+        "component_breakdown": {"hello.txt": "Test file"},
+    }
+    orch.last_completed_task_index = -1
+    orch.is_resuming = True
+    orch.enable_file_verification = False
+
+    model_switches = []
+    dev_calls = {"count": 0}
+
+    class _DummyToolCall:
+        def __init__(self, tool_name, tool_args):
+            self.tool_name = tool_name
+            self.tool_args = tool_args
+
+        def to_legacy(self):
+            return {"tool_name": self.tool_name, "tool_args": self.tool_args}
+
+    class _DummyDevResult:
+        def __init__(self, success, output, tool_calls):
+            self.success = success
+            self.output = output
+            self.tool_calls = tool_calls
+
+    async def fake_run_developer_agent(task):
+        dev_calls["count"] += 1
+        if dev_calls["count"] <= 3:
+            return _DummyDevResult(True, "retry", [])
+        file_path = os.path.join(orch.project_dir, "hello.txt")
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write("hello")
+        return _DummyDevResult(True, "ok", [_DummyToolCall("write_file", {"filename": "hello.txt"})])
+
+    def init_execution_agents(model_override=None):
+        selected = model_override or orch.execution_model
+        model_switches.append(selected)
+        orch.dev_agent = DummyAgent()
+        orch.reviewer_agent = DummyReviewer()
+        orch.tester_agent = None
+        orch.unit_test_agent = None
+        orch._dev_base_system_prompt = ""
+        orch.active_execution_model = selected
+
+    monkeypatch.setattr(orch, "_init_execution_agents", init_execution_agents)
+    monkeypatch.setattr(orch, "_run_developer_agent", fake_run_developer_agent)
+    monkeypatch.setattr(orch, "_get_project_diff", lambda: "")
+    monkeypatch.setattr(orch, "_get_project_structure_string", lambda: "")
+    monkeypatch.setattr(orch, "_update_index_incrementally", lambda *a, **k: None)
+    monkeypatch.setattr(orch, "_build_index_from_disk", lambda: None)
+    monkeypatch.setattr(orch, "_git_commit", lambda *a, **k: None)
+    monkeypatch.setattr(orch, "_find_placeholders_in_files", lambda *a, **k: [])
+    monkeypatch.setattr("orchestrator.execute_planning_stage", lambda _: orch.user_prompt)
+
+    asyncio.run(orch.run())
+
+    assert "strong-model" in model_switches
+    assert orch.last_completed_task_index == 0

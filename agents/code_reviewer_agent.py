@@ -56,6 +56,19 @@ class CodeReviewerAgent(BaseAgent):
                 description="Check if a directory exists in the project."
             ),
             FunctionTool.from_defaults(
+                fn=self._wrap_tool(
+                    lambda query, top_k=5, max_chars=2000: orchestrator_tools.recall_memory(
+                        query=query,
+                        agent_name="CodeReviewerAgent",
+                        top_k=top_k,
+                        max_chars=max_chars,
+                    ),
+                    "recall_memory",
+                ),
+                name="recall_memory",
+                description="Read-only: recall relevant project and reviewer memory context."
+            ),
+            FunctionTool.from_defaults(
                 fn=self._wrap_tool(orchestrator_tools.submit_review, "submit_review"),
                 name="submit_review",
                 description="**MANDATORY** - Submit your review. This is the ONLY way to complete a review."

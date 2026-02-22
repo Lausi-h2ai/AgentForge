@@ -7,6 +7,60 @@ import os
 from .context import StageContext
 
 
+def _create_plan_with_escalation(orch, planning_prompt_with_memory: str, architecture: dict):
+    """
+    Run SADT planning with optional model escalation after repeated failures.
+    Returns (plan, run_command_from_plan).
+    Raises the last planner exception if all attempts fail.
+    """
+    max_attempts = max(1, int(getattr(orch, "planning_max_attempts", 1)))
+    escalation_enabled = bool(getattr(orch, "planning_escalation_enabled", False))
+    threshold = max(1, int(getattr(orch, "planning_escalation_failure_threshold", 1)))
+    provider = str(getattr(orch, "provider", "")).strip().lower()
+    escalation_models = getattr(orch, "planning_escalation_models", {}) or {}
+    escalation_model = escalation_models.get(provider)
+
+    failures = 0
+    last_error = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return orch.sadt_sart_agent.create_plan(
+                planning_prompt_with_memory,
+                architecture,
+                orch.logger
+            )
+        except Exception as e:
+            last_error = e
+            failures += 1
+            if orch.logger:
+                orch.logger.log("WARNING", f"Planner attempt {attempt}/{max_attempts} failed: {e}")
+
+            should_escalate = (
+                escalation_enabled
+                and failures >= threshold
+                and escalation_model
+            )
+            if should_escalate:
+                orch._ensure_planning_model(escalation_model)
+                if orch.logger:
+                    orch.logger.log(
+                        "WARNING",
+                        f"Planner escalation triggered after {failures} failures -> model {escalation_model}",
+                    )
+            elif escalation_enabled and failures >= threshold and not escalation_model and orch.logger:
+                orch.logger.log(
+                    "WARNING",
+                    f"Planner escalation eligible but no model configured for provider '{provider}'",
+                )
+
+            if attempt >= max_attempts:
+                raise
+
+    if last_error:
+        raise last_error
+    raise RuntimeError("Planner failed unexpectedly")
+
+
 def execute_planning_stage(ctx: StageContext) -> str:
     """
     Execute requirements + architecture + planning phases.
@@ -121,10 +175,10 @@ def execute_planning_stage(ctx: StageContext) -> str:
 
     if orch.sadt_sart_agent:
         try:
-            orch.plan, run_cmd_from_plan = orch.sadt_sart_agent.create_plan(
+            orch.plan, run_cmd_from_plan = _create_plan_with_escalation(
+                orch,
                 planning_prompt_with_memory,
                 architecture,
-                orch.logger
             )
             orch.sadt_plan = list(orch.plan)
             orch.planner_source = "sadt"
