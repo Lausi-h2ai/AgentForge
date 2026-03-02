@@ -66,6 +66,13 @@ class OrchestratorTools:
         if not filename:
             raise ValueError("Filename cannot be empty")
 
+        if isinstance(filename, str):
+            trimmed = filename.strip()
+            if trimmed.startswith("workspace/"):
+                filename = trimmed[len("workspace/"):]
+            elif trimmed.startswith("workspace\\"):
+                filename = trimmed[len("workspace\\"):]
+
         # Step 1: Normalize the path (handles / and \ on all platforms)
         normalized = os.path.normpath(filename)
 

@@ -209,6 +209,10 @@ Include a confidence score (0.0-1.0) in the report if possible.
                     "description": "Code review agent failed to call submit_review within timeout. Manual review required.",
                     "suggestion": "Review code manually or retry review"
                 }]
+            try:
+                handler.cancel()
+            except Exception:
+                pass
         
         except CircuitBreakerError as e:
             print(f"\nCircuit breaker tripped: {e}")
@@ -221,6 +225,10 @@ Include a confidence score (0.0-1.0) in the report if possible.
                     "description": str(e),
                     "suggestion": "Re-run review or submit review with findings gathered so far"
                 }]
+            try:
+                handler.cancel()
+            except Exception:
+                pass
 
         except Exception as e:
             print(f"\n❌ Error during review: {type(e).__name__}: {e}")
@@ -228,6 +236,10 @@ Include a confidence score (0.0-1.0) in the report if possible.
             
             if not submit_review_called:
                 final_issues = self._create_error_issue(str(e))
+            try:
+                handler.cancel()
+            except Exception:
+                pass
         
         # Validate final result
         if final_issues is None:
@@ -317,6 +329,7 @@ Include a confidence score (0.0-1.0) in the report if possible.
     def _wrap_tool(self, tool_fn, tool_name: str):
         """Wrap tool calls to detect repeated tool-call loops."""
         def wrapper(*args, **kwargs):
+            args, kwargs = self._normalize_tool_invocation(tool_name, args, kwargs)
             call_signature = f"{tool_name}({repr(kwargs) if kwargs else repr(args)})"
             self.last_tool_calls.append(call_signature)
             if len(self.last_tool_calls) > 3:
@@ -345,6 +358,52 @@ Include a confidence score (0.0-1.0) in the report if possible.
 
             return tool_fn(*args, **kwargs)
         return wrapper
+
+    def _normalize_tool_invocation(self, tool_name: str, args, kwargs):
+        """Normalize common malformed tool payloads emitted by model tool-calling."""
+        normalized_args = list(args or [])
+        normalized_kwargs = dict(kwargs or {})
+
+        if not normalized_kwargs and len(normalized_args) == 1 and isinstance(normalized_args[0], dict):
+            normalized_kwargs = dict(normalized_args[0])
+            normalized_args = []
+
+        nested_kwargs = normalized_kwargs.get("kwargs")
+        if isinstance(nested_kwargs, dict):
+            normalized_kwargs = {
+                **nested_kwargs,
+                **{k: v for k, v in normalized_kwargs.items() if k != "kwargs"},
+            }
+
+        wrapped_args = normalized_kwargs.pop("args", None)
+        key_by_tool = {
+            "read_file": "filename",
+            "get_code_summary": "filename",
+            "directory_exists": "dirname",
+        }
+        target_key = key_by_tool.get(tool_name)
+        if target_key and target_key not in normalized_kwargs:
+            if isinstance(wrapped_args, str):
+                normalized_kwargs[target_key] = wrapped_args
+            elif isinstance(wrapped_args, (list, tuple)) and wrapped_args:
+                normalized_kwargs[target_key] = wrapped_args[0]
+            elif normalized_args:
+                normalized_kwargs[target_key] = normalized_args[0]
+                normalized_args = normalized_args[1:]
+
+        if tool_name == "submit_review" and "report" not in normalized_kwargs:
+            if "issues" in normalized_kwargs:
+                normalized_kwargs["report"] = {
+                    "issues": normalized_kwargs.get("issues", []),
+                    "confidence": normalized_kwargs.get("confidence"),
+                }
+            elif "summary" in normalized_kwargs:
+                normalized_kwargs["report"] = {
+                    "issues": [],
+                    "confidence": normalized_kwargs.get("confidence"),
+                }
+
+        return tuple(normalized_args), normalized_kwargs
 
     def _compute_confidence(self) -> float:
         """Compute a lightweight confidence score based on tool usage."""

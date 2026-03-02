@@ -92,3 +92,35 @@ def test_generate_workplan_falls_back_to_regen_when_correction_fails():
     assert plan is not None
     assert len(prompts) >= 3
     assert "EXISTING PLAN (JSON)" in prompts[1]
+
+
+def test_required_topics_ignore_technical_architecture_noise():
+    planner = _mk_planner()
+
+    plan = {
+        "project_title": "Hello",
+        "context": "Hello context",
+        "tasks": [
+            {
+                "id": "T1",
+                "title": "Create hello world script",
+                "description": "Add hello_world.py and tests/test_hello_world.py with pytest test",
+            }
+        ],
+    }
+
+    project_context = """Functional Requirements:
+
+Implement a Hello World solution compatible with Python 3.14.
+In-Scope:
+- Create hello_world.py
+- Create tests/test_hello_world.py
+
+Technical Architecture:
+
+{"legacy_note": "old pantry migration mention kept for audit"}
+"""
+
+    missing = planner._check_required_topics(plan, project_context)
+
+    assert "Pantry CRUD" not in missing

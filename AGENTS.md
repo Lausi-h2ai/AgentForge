@@ -1,93 +1,49 @@
 # AGENTS.md
 
 ## Project Summary
-Smart Pantry & Recipe App (Paintroo): a single-user MVP that manages pantry items, parses receipts via OCR, and generates recipes using local Ollama LLMs. Backend is Python/FastAPI with PostgreSQL; frontend is React + TypeScript + Tailwind. Goals are end-to-end flow (pantry CRUD, recipe generation, receipt upload/parse/apply, meal history) with strong validation, error handling, and responsive UI.
+Multi-agent coding orchestrator with a blackboard-style workflow. The system runs specialized agents (requirements, architecture, planning, development, review, testing, docs) to convert a high-level prompt into incremental code changes with retries, validation, checkpoints, and trace logging.
 
-## Core Logic
-- Pantry items are stored in DB, normalized for search/autocomplete, and merged on duplicates.
-- Recipe generation uses pantry items + user preferences to prompt an Ollama model, returning structured JSON.
-- Receipt flow: upload file -> OCR text -> regex parse (fast) or Ollama parse (accurate) -> user selection -> apply to pantry.
-- Meal history tracks cooked recipes and computes diversity metrics to avoid repetition.
+## Canonical Scope
+- This repository's identity is the orchestrator itself.
+- Sample generated applications are outputs of orchestrator runs, not project identity.
 
-## How It Works Together
-- Orchestrator coordinates agents, planning, development, review, tests, and state persistence.
-- Planner (SADTSARTPlannerAgent) turns requirements + architecture into atomic tasks.
-- Developer agent implements tasks; reviewer agent performs fast checks and returns structured issues.
-- State is saved in `projects/<project>/state.json` and checkpoints in `projects/<project>/checkpoints.json`.
+## Core Runtime
+- Main entrypoint: `orchestrator.py`.
+- Core package: `orchestrator_core/` (contracts, blackboard state, pipeline stages).
+- Agent implementations: `agents/`.
+- Tool surface for agents: `orchestrator_tools.py`.
+- Per-project state/checkpoints: `projects/<project>/state.json`, `projects/<project>/checkpoints.json`.
+- Prompt sets: `prompts/<agent>/<version>/...`.
 
-## Key Files and Responsibilities
-- `orchestrator.py`: Main workflow engine; manages planning, task execution, review, retries, logging, and state.
-- `orchestrator_tools.py`: Tooling interface for agents (read/write/submit_review), with review schema definitions.
-- `agents/sadt_sart_planner_agent.py`: Generates hierarchical plan and flattens to atomic actions.
-- `agents/code_reviewer_agent.py`: Fast reviewer with timeout, circuit breaker, and confidence scoring.
-- `smart_pantry_ollama_prompt_IMPROVED.txt`: Full requirements/spec used for planning.
-- `projects/paintroo/state.json`: Current plan, architecture, run command, and planner metadata.
+## Agent Roles
+- `agents/product_owner_agent.py`
+- `agents/requirements_analyst_agent.py`
+- `agents/software_architect_agent.py`
+- `agents/sadt_sart_planner_agent.py`
+- `agents/developer_agent.py`
+- `agents/code_reviewer_agent.py`
+- `agents/tester_agent.py`
+- `agents/unit_test_agent.py`
+- `agents/documentation_agent.py`
 
-## Agent Roles (Key Files)
-- `agents/product_owner_agent.py`: Clarifies product goals and scope.
-- `agents/requirements_analyst_agent.py`: Refines requirements into actionable specs.
-- `agents/software_architect_agent.py`: Produces technical architecture and file structure.
-- `agents/sadt_sart_planner_agent.py`: Generates hierarchical workplans and atomic tasks.
-- `agents/developer_agent.py`: Implements tasks by modifying code.
-- `agents/code_reviewer_agent.py`: Fast review with circuit breaker and confidence.
-- `agents/tester_agent.py`: Runs quality gates when enabled.
-- `agents/unit_test_agent.py`: Produces unit tests.
-- `agents/documentation_agent.py`: Generates README/docs.
+## Execution Flow
+1. Requirements analysis.
+2. Architecture generation.
+3. SADT/SART planning into atomic tasks.
+4. Development + review loop per task.
+5. Optional tests.
+6. Documentation and final reporting.
 
-## Skills System
-- Skills are modular instruction bundles stored under `skills/` and injected by `SkillManager`.
-- Orchestrator injects skills into agents? system prompts based on task description and token budget.
-- Skills are not global; they are applied per task to keep context small and relevant.
-- Architecture integration: skills influence planning, coding, and review behavior without changing code directly.
+## Key Capabilities
+- Prompt routing/versioning per agent and task/profile overlays.
+- Reviewer circuit breaker, dynamic timeout, confidence score.
+- Task-level model escalation for developer/reviewer when retries indicate loop + no-progress.
+- Planner model escalation after configurable planning failures.
+- Planner correction pass that patches invalid parseable plans before full regeneration.
+- Local memory integration (HippocampAI) with project/agent/user scopes.
 
-## Runtime Flow (High Level)
-1. Load requirements + architecture.
-2. Generate plan (SADT planner).
-3. For each task: developer edits files -> reviewer checks -> optional tests -> state saved.
-4. Final documentation generated on success.
-
-﻿# AGENTS.md
-
-## Memory (2026-02-05)
-- Investigated missing plan steps in `projects/paintroo/state.json`. Found `plan` and `sadt_plan` were exactly 100 tasks and lacked OCR/Ollama/Tesseract/LLM tasks.
-- Root cause: `agents/sadt_sart_planner_agent.py` capped `max_total_actions` to 100 for complex projects. Updated it to remove the hard cap and allow unlimited actions by default. Added optional env cap `SADT_MAX_ACTIONS` (positive integer) to re-enable a budget if desired. Log now reports “no action budget limit” when unset.
-- Regeneration approach: user requested manual planning (no scripts). Used `smart_pantry_ollama_prompt_IMPROVED.txt` and `technical_architecture` from `projects/paintroo/state.json` to create a new untruncated plan (140 tasks) explicitly including OCR + Ollama integration.
-- Wrote the new plan into `projects/paintroo/state.json` (`plan` and `sadt_plan`), set `planner_source` to `sadt`, and reset `last_completed_task_index` to `-1`.
-- Current state: `state.json` now has 140 tasks including OCR/Ollama tasks; planner code no longer truncates unless `SADT_MAX_ACTIONS` is set.
-
-## Memory (2026-02-05) - Reviewer Circuit Breaker + Confidence
-- Added circuit breaker to CodeReviewerAgent tool calls: wraps reviewer tools and raises CircuitBreakerError if same tool call repeats 3x. Review returns a major integration_issue when tripped.
-- Reviewer timeouts now dynamic: added REVIEW_TIMEOUT_CONFIG and heuristics in orchestrator; timeout set per task based on file count/diff size.
-- Added review findings validation in orchestrator: currently filters false-positive Python syntax errors using compile() check.
-- Updated reviewer prompt to match dynamic timeout using a template with runtime substitution.
-- Added reviewer confidence scores: ReviewReport now accepts optional confidence (0.0–1.0). submit_review outputs confidence. Reviewer tool wrapper auto-injects confidence if missing (simple heuristic based on tool usage).
-- Updated allowed review issue types to include syntax_error.
-
-## Memory (2026-02-17) - Prompt Routing v2
-- Added rule-based task-type prompt routing in `agents/prompt_router.py` with task classes:
-  `create_file`, `modify_file`, `bugfix`, `refactor`, `test_write`, `review`.
-- Developer and reviewer now load base + enhanced/system prompts plus task-type overlays from:
-  `prompts/developer/<version>/task_types/*.md` and `prompts/reviewer/<version>/task_types/*.md`.
-- Added prompt set `v2` with stronger reliability rules (canonical tool-call format, anti-loop guidance, explicit done criteria) and code-quality focus.
-- `.env.example` now defaults to `PROMPT_DEVELOPER_VERSION=v2` and `PROMPT_REVIEWER_VERSION=v2`.
-
-## Memory (2026-02-17) - Prompt Routing v2 for Planning/Requirements/Architecture
-- Requirements analyst prompt is now versioned and loaded from `prompts/requirements_analyst/<version>/base.md` with rule-based profile overlays in `profiles/*.md`.
-- Software architect prompt is now versioned and loaded from `prompts/software_architect/<version>/base.md` with profile overlays (`general`, `backend_api`, `fullstack`).
-- SADT planner now loads versioned base prompt from `prompts/planner/<version>/base.md` and complexity overlays from `complexity/{simple|medium|complex}.md`.
-- Added env version controls: `PROMPT_REQUIREMENTS_ANALYST_VERSION`, `PROMPT_SOFTWARE_ARCHITECT_VERSION`, `PROMPT_PLANNER_VERSION`.
-
-## Memory (2026-02-13) - HippocampAI Local Memory Integration
-- Added local HippocampAI memory wrapper under `memory/` with safe imports and scoped user IDs (project, agent, global).
-- Orchestrator now injects memory context into requirements, architecture, planning, developer, and reviewer prompts.
-- Memory writes on requirements/architecture, task completion summaries, and retry failures to reduce repeated errors and invalid tool calls.
-- Default local configuration expects Qdrant at `http://localhost:6333` and Ollama model `gemma3:4b`.
-
-## Memory (2026-02-17) - Orchestrator Core + Prompt/Config Cleanup
-- Renamed internal orchestration package from `orchestrator/` to `orchestrator_core/` to remove import ambiguity and eliminate runtime `sys.path` hacks.
-- `orchestrator.py` now imports typed contracts, blackboard state, and pipeline stages via explicit package imports:
-  `orchestrator_core.contracts`, `orchestrator_core.blackboard`, `orchestrator_core.pipeline`.
-- Reviewer timeout values moved to environment-driven config:
-  `REVIEW_TIMEOUT_SIMPLE`, `REVIEW_TIMEOUT_MEDIUM`, `REVIEW_TIMEOUT_COMPLEX` (with sane defaults).
-- Prompt v2 set expanded with compact example blocks in each file to improve reliability without reintroducing long-prompt failure patterns.
-- Strengthened role headers in v2 prompts for developer/reviewer/requirements/architect/planner to improve output quality and consistency.
+## Recent Notable Changes
+- Removed hard planner action cap by default (optional `SADT_MAX_ACTIONS` env cap).
+- Added task-level escalation policy and planner escalation config.
+- Added `recall_memory` tool for developer/reviewer.
+- Improved developer no-tool-call guard to avoid premature breaker trips on fragmented streaming outputs.

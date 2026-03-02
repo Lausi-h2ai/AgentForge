@@ -15,6 +15,11 @@ Save as `demo_prompt.txt`.
 python orchestrator.py demo_project --prompt demo_prompt.txt --new
 ```
 
+Or use the helper script (works from repo root):
+```powershell
+.\scripts\demo_run.ps1
+```
+
 Optional: use different models for planning vs execution
 ```
 python orchestrator.py demo_project --prompt demo_prompt.txt --new \
