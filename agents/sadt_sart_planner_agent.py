@@ -14,7 +14,7 @@ from .base_agent import BaseAgent
 import json
 import os
 import re
-from typing import List
+from typing import List, Optional
 from prompt_loader import load_versioned_prompt
 
 
@@ -664,7 +664,7 @@ Organize by feature/component area. No installation/execution tasks."""
         depth_limit: int,
         max_subtask_depth: int,
         logger=None,
-    ) -> dict | None:
+    ) -> Optional[dict]:
         correction_prompt = f"""PROJECT: {project_title}
 
 CONTEXT:
@@ -1030,9 +1030,37 @@ NO execution commands. Output ONLY valid JSON array."""
                 parts.append(sub.get("description", ""))
         return " ".join(parts)
 
+    def _extract_topic_source_text(self, project_context: str) -> str:
+        """
+        Extract requirement-focused text for topic validation.
+
+        We intentionally ignore the "Technical Architecture" section to avoid
+        enforcing stale/example keywords that are not in current scope.
+        """
+        text = project_context or ""
+        lowered = text.lower()
+
+        if "technical architecture:" in lowered:
+            split_idx = lowered.find("technical architecture:")
+            text = text[:split_idx]
+            lowered = text.lower()
+
+        if "in-scope:" in lowered:
+            in_scope_start = lowered.find("in-scope:")
+            section = text[in_scope_start:]
+            section_lower = section.lower()
+            next_markers = [m for m in ["out-of-scope:", "acceptance criteria:", "file requirements:"] if m in section_lower]
+            if next_markers:
+                end_candidates = [section_lower.find(m) for m in next_markers]
+                end_idx = min(i for i in end_candidates if i >= 0)
+                section = section[:end_idx]
+            return section
+
+        return text
+
     def _check_required_topics(self, plan: dict, project_context: str) -> List[str]:
         """Ensure plan includes topics explicitly mentioned in the prompt/context."""
-        context_lower = (project_context or "").lower()
+        context_lower = self._extract_topic_source_text(project_context).lower()
         plan_text = self._plan_text(plan).lower()
 
         required_map = {

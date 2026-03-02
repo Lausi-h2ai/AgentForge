@@ -77,7 +77,7 @@ from agents import (
     UnitTestAgent,
     TesterAgent,
     configure_llm_and_embed,
-    get_phase_model_overrides
+    resolve_model_config,
 )
 
 # Import supporting modules (assumed to exist):
@@ -370,7 +370,7 @@ class Orchestrator:
         # --- 1. CORE SETUP ---
         self.logger = StructuredLogger()
         self.provider = provider
-        env_planning_model, env_execution_model = get_phase_model_overrides(provider)
+        env_planning_model, env_execution_model, env_escalation_models = resolve_model_config(provider)
         self.planning_model = planning_model or env_planning_model
         self.execution_model = execution_model or env_execution_model or self.planning_model
 
@@ -416,11 +416,7 @@ class Orchestrator:
         self.planning_escalation_enabled = os.getenv("PLANNER_ESCALATION_ENABLED", "false").lower() == "true"
         self.planning_escalation_failure_threshold = _env_int("PLANNER_ESCALATION_FAILURE_THRESHOLD", 1)
         self.planning_max_attempts = _env_int("PLANNER_MAX_ATTEMPTS", 2)
-        self.planning_escalation_models = {
-            "ollama": (os.getenv("PLANNER_ESCALATION_MODEL_OLLAMA") or "").strip(),
-            "google": (os.getenv("PLANNER_ESCALATION_MODEL_GOOGLE") or "").strip(),
-        }
-        self.planning_escalation_models = {k: v for k, v in self.planning_escalation_models.items() if v}
+        self.planning_escalation_models = dict(env_escalation_models)
         self.task_escalation_policy = TaskEscalationPolicy.from_env()
         self.task_escalation_states: Dict[int, TaskEscalationState] = {}
         

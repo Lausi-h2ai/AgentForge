@@ -6,8 +6,10 @@ import json
 import re
 import time
 import os
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict
 from enum import Enum
+
+from orchestrator_core.model_config import get_phase_model_overrides, resolve_model_config
 
 # LlamaIndex imports
 from llama_index.llms.google_genai import GoogleGenAI
@@ -31,33 +33,6 @@ class ErrorCategory(Enum):
     REQUIRES_HUMAN = "requires_human"
     PARSING_ERROR = "parsing_error"
     UNKNOWN = "unknown"
-
-
-def get_phase_model_overrides(provider: str) -> Tuple[Optional[str], Optional[str]]:
-    """
-    Get optional planning/execution model overrides from environment variables.
-
-    Supported env vars:
-      - OLLAMA_PLANNING_MODEL / OLLAMA_EXECUTION_MODEL / OLLAMA_MODEL
-      - GOOGLE_PLANNING_MODEL / GOOGLE_EXECUTION_MODEL / GOOGLE_MODEL
-    """
-    provider_key = (provider or "").lower()
-    if provider_key == "google":
-        planning = os.getenv("GOOGLE_PLANNING_MODEL")
-        execution = os.getenv("GOOGLE_EXECUTION_MODEL")
-        fallback = os.getenv("GOOGLE_MODEL")
-    else:
-        planning = os.getenv("OLLAMA_PLANNING_MODEL")
-        execution = os.getenv("OLLAMA_EXECUTION_MODEL")
-        fallback = os.getenv("OLLAMA_MODEL")
-
-    if planning is None and fallback is not None:
-        planning = fallback
-    if execution is None and planning is not None:
-        execution = planning
-
-    return planning, execution
-
 
 def parse_json_from_response(response_str: str) -> Optional[Dict]:
     """

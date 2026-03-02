@@ -16,8 +16,8 @@ This project implements a multi?agent AI system designed to autonomously develop
 - **Skills System:** `SkillManager` loads `skills/*/SKILL.md` and injects relevant guidance per task to improve agent performance without bloating context.
 - **Dynamic Review Timeout:** Review timeouts scale with change complexity (files/diff size).
 - **Reviewer Guardrails:** Circuit breaker stops repeated tool loops; review output includes a confidence score; false?positive syntax errors are filtered.
-- **Task-Level Model Escalation:** Developer/reviewer tasks can automatically switch to a stronger model when retries show combined loop signals (repeat + no-progress).
-- **Phase?Based Models:** Use one model for planning and another for execution (sequentially, no dual?model VRAM load).
+- **Task-Level Model Escalation:** Developer/reviewer tasks can automatically switch to a stronger shared fallback model when retries show combined loop signals (repeat + no-progress).
+- **Simplified Model Configuration:** Use one base model everywhere by default, with one shared escalation model for planner and task retries.
 - **RAG?Powered Context:** Uses LlamaIndex to provide relevant code context.
 - **Pluggable LLM Providers:** Switch between local (Ollama) and cloud (Google Gemini).
 - **Cost & Usage Tracking:** Tracks token usage and estimates cost per model.
@@ -76,27 +76,21 @@ This project uses HippocampAI memory with local Qdrant + Ollama. Set these in `.
 
 Memory is scoped by project and agent, with an optional global scope for cross-project learnings.
 
-## Model Selection (Planning vs Execution)
+## Model Selection
 
-You can run **different models per phase** (sequentially, no dual load):
+The canonical configuration now uses one base model for planning and execution, plus one shared escalation model for stronger retry paths:
 
 ### CLI Flags
 ```bash
 python orchestrator.py myproject --prompt myrequirements.txt \
-  --planning-model qwen2.5:latest \
+  --planning-model qwen3-coder:latest \
   --execution-model qwen3-coder:latest
 ```
 
 ### Environment Variables
-For **Ollama**:
-- `OLLAMA_PLANNING_MODEL`
-- `OLLAMA_EXECUTION_MODEL`
-- `OLLAMA_MODEL` (fallback)
-
-For **Google**:
-- `GOOGLE_PLANNING_MODEL`
-- `GOOGLE_EXECUTION_MODEL`
-- `GOOGLE_MODEL` (fallback)
+- `LLM_PROVIDER`
+- `LLM_MODEL`
+- `LLM_ESCALATION_MODEL`
 
 Reviewer timeout tuning:
 - `REVIEW_TIMEOUT_SIMPLE`
@@ -108,17 +102,13 @@ Task-level escalation tuning:
 - `ESCALATION_AGENTS` (default: `developer,reviewer`)
 - `ESCALATION_REPEAT_THRESHOLD` (default: `3`)
 - `ESCALATION_NO_PROGRESS_THRESHOLD` (default: `2`)
-- `ESCALATION_MODEL_OLLAMA`
-- `ESCALATION_MODEL_GOOGLE`
 
 Planner escalation tuning:
 - `PLANNER_ESCALATION_ENABLED`
 - `PLANNER_ESCALATION_FAILURE_THRESHOLD` (default: `1`)
 - `PLANNER_MAX_ATTEMPTS` (default: `2`)
-- `PLANNER_ESCALATION_MODEL_OLLAMA`
-- `PLANNER_ESCALATION_MODEL_GOOGLE`
 
-If no model is specified, the same model is used for all phases.
+If no overrides are specified, `LLM_MODEL` is used for all phases and `LLM_ESCALATION_MODEL` is used for both planner escalation and task escalation.
 
 ## Prompt Configuration
 
@@ -177,8 +167,7 @@ Included tests cover:
 A Flask UI can visualize traces:
 
 ```bash
-cd monitoring_ui
-pip install -r requirements.txt
+cd monitor_ui
 flask run --port=5001
 ```
 
@@ -194,4 +183,4 @@ Contributions welcome. Areas to improve:
 
 ## License
 
-MIT License. See `LICENSE`.
+No license file is currently checked in this workspace.

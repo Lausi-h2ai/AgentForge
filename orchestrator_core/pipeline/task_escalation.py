@@ -5,6 +5,8 @@ import os
 from dataclasses import dataclass
 from typing import Dict, Optional, Set
 
+from orchestrator_core.model_config import resolve_model_config
+
 
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
@@ -66,12 +68,10 @@ class TaskEscalationPolicy:
             for agent in agents_raw.split(",")
             if agent.strip()
         }
-
-        escalation_models = {
-            "ollama": (os.getenv("ESCALATION_MODEL_OLLAMA") or "").strip(),
-            "google": (os.getenv("ESCALATION_MODEL_GOOGLE") or "").strip(),
-        }
-        escalation_models = {k: v for k, v in escalation_models.items() if v}
+        escalation_models = {}
+        for provider in ("ollama", "google"):
+            _, _, provider_models = resolve_model_config(provider)
+            escalation_models.update(provider_models)
 
         return cls(
             enabled=_env_bool("ESCALATION_ENABLED", False),

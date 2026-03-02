@@ -2,6 +2,7 @@ from .utils import (
     configure_llm_and_embed as configure_llm_and_embed,
     get_phase_model_overrides as get_phase_model_overrides,
     parse_json_from_response as parse_json_from_response,
+    resolve_model_config as resolve_model_config,
 )
 from .product_owner_agent import ProductOwnerAgent as ProductOwnerAgent
 from .developer_agent import DeveloperAgent as DeveloperAgent
@@ -17,6 +18,7 @@ __all__ = [
     "configure_llm_and_embed",
     "get_phase_model_overrides",
     "parse_json_from_response",
+    "resolve_model_config",
     "ProductOwnerAgent",
     "DeveloperAgent",
     "CodeReviewerAgent",

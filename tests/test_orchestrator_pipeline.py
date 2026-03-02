@@ -204,6 +204,7 @@ if "pydantic" not in sys.modules:
     sys.modules["pydantic"] = pydantic_stub
 
 from orchestrator import Orchestrator
+from agents.utils import resolve_model_config
 
 
 class DummyConversation:
@@ -412,13 +413,59 @@ def test_contract_validators():
     assert 0.0 <= review_report.get("confidence", 0.0) <= 1.0
 
 
+def test_model_resolution_uses_llm_model_for_planning_and_execution(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("LLM_MODEL", "base-model")
+    monkeypatch.setenv("LLM_ESCALATION_MODEL", "strong-model")
+
+    planning, execution, escalation = resolve_model_config("ollama")
+
+    assert planning == "base-model"
+    assert execution == "base-model"
+    assert escalation == {"ollama": "strong-model"}
+
+
+def test_model_resolution_requires_canonical_env_vars(monkeypatch):
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    monkeypatch.delenv("LLM_ESCALATION_MODEL", raising=False)
+
+    planning, execution, escalation = resolve_model_config("ollama")
+
+    assert planning is None
+    assert execution is None
+    assert escalation == {}
+
+
+def test_orchestrator_uses_same_base_model_for_planning_and_execution(monkeypatch):
+    tmp_path = _mk_tmp_dir("orch_shared_model")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("LLM_MODEL", "shared-base")
+    monkeypatch.setenv("LLM_ESCALATION_MODEL", "shared-strong")
+
+    prompt_path = tmp_path / "prompt.txt"
+    prompt_path.write_text("Shared model prompt", encoding="utf-8")
+
+    orch = Orchestrator(
+        "shared_model_project",
+        initial_prompt_file=str(prompt_path),
+        provider="ollama",
+        force_new=True,
+        run_tests=False,
+    )
+
+    assert orch.planning_model == "shared-base"
+    assert orch.execution_model == "shared-base"
+    assert orch.planning_escalation_models == {"ollama": "shared-strong"}
+
+
 def test_task_model_escalation_switches_to_stronger_model(monkeypatch):
     tmp_path = _mk_tmp_dir("orch_escalation")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("ESCALATION_ENABLED", "true")
     monkeypatch.setenv("ESCALATION_REPEAT_THRESHOLD", "3")
     monkeypatch.setenv("ESCALATION_NO_PROGRESS_THRESHOLD", "2")
-    monkeypatch.setenv("ESCALATION_MODEL_OLLAMA", "strong-model")
+    monkeypatch.setenv("LLM_ESCALATION_MODEL", "strong-model")
 
     project_name = "escalation_project"
     prompt_path = tmp_path / "prompt.txt"

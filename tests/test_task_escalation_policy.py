@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -76,3 +78,28 @@ def test_policy_missing_provider_model_does_not_escalate():
     assert policy.should_escalate(state) is True
     assert policy.try_escalate(state, provider="ollama") is False
     assert state.is_escalated is False
+
+
+@pytest.mark.parametrize(
+    "env_name,expected_models",
+    [
+        ("LLM_ESCALATION_MODEL", {"ollama": "shared-strong", "google": "shared-strong"}),
+    ],
+)
+def test_policy_from_env_resolves_shared_escalation_model(monkeypatch, env_name, expected_models):
+    monkeypatch.delenv("LLM_ESCALATION_MODEL", raising=False)
+    monkeypatch.setenv("ESCALATION_ENABLED", "true")
+    monkeypatch.setenv(env_name, "shared-strong")
+
+    policy = TaskEscalationPolicy.from_env()
+
+    assert policy.escalation_models == expected_models
+
+
+def test_policy_from_env_requires_canonical_escalation_model(monkeypatch):
+    monkeypatch.setenv("ESCALATION_ENABLED", "true")
+    monkeypatch.delenv("LLM_ESCALATION_MODEL", raising=False)
+
+    policy = TaskEscalationPolicy.from_env()
+
+    assert policy.escalation_models == {}
