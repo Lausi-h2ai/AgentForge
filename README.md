@@ -16,9 +16,9 @@ This repository is the orchestrator itself. Generated applications under `projec
 ## Repository layout
 
 - `aidev_orchestrator/`: packaged runtime modules, entrypoint logic, tool surface, and support utilities
-- `orchestrator.py`: thin root CLI shim for backwards-compatible invocation`r`n- `orchestrator_core/`: blackboard state, contracts, pipeline stages, model config
+- `orchestrator.py`: thin root CLI shim for backwards-compatible invocation
+- `orchestrator_core/`: blackboard state, contracts, pipeline stages, model config
 - `agents/`: specialized agents
-- `aidev_orchestrator/`: packaged runtime modules including the tool surface used by execution agents
 - `prompts/`: versioned prompt templates and task overlays
 - `examples/prompts/`: sanitized public example prompts
 - `.rpg/`: committed semantic code graph
@@ -110,6 +110,8 @@ npx -y -p rpg-encoder rpg-encoder search "coordinate workflow"
 ```
 
 The `.rpg/README.md` file has additional MCP and CLI usage examples.
+
+For a related graph-oriented codebase effort, see [microsoft/RPG-ZeroRepo](https://github.com/microsoft/RPG-ZeroRepo).
 
 ## Contributing
 

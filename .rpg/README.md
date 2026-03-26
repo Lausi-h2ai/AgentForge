@@ -52,3 +52,4 @@ After making code changes, run `rpg-encoder update` to incrementally sync the gr
 - **GitHub**: [github.com/userFRM/rpg-encoder](https://github.com/userFRM/rpg-encoder)
 - **npm**: [npmjs.com/package/rpg-encoder](https://www.npmjs.com/package/rpg-encoder)
 - **Paper**: [arXiv:2602.02084](https://arxiv.org/abs/2602.02084)
+- **Related project**: [microsoft/RPG-ZeroRepo](https://github.com/microsoft/RPG-ZeroRepo)
