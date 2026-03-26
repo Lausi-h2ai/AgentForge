@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from orchestrator_tools import OrchestratorTools
+from aidev_orchestrator.orchestrator_tools import OrchestratorTools
 
 
 class _DummyOrchestrator:
@@ -65,3 +65,4 @@ def test_recall_memory_reports_unavailable_when_memory_disabled():
 
     assert result["success"] is False
     assert "unavailable" in result["error"].lower()
+

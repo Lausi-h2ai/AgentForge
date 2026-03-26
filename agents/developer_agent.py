@@ -13,13 +13,18 @@ import os
 from typing import List, Dict, Optional, Tuple
 from collections import defaultdict, deque
 from .base_agent import BaseAgent
+from .llama_compat import (
+    AgentOutput,
+    AgentStream,
+    Context,
+    FunctionTool,
+    ReActAgent,
+    StopEvent,
+    ToolCallResult,
+)
 from .prompt_router import detect_task_type
-from skill_manager import inject_skills_into_system_message
-from prompt_loader import load_versioned_prompt
-from llama_index.core.tools import FunctionTool
-from llama_index.core.agent import ReActAgent
-from llama_index.core.workflow import Context, StopEvent
-from llama_index.core.agent.workflow import AgentStream, ToolCallResult, AgentOutput
+from aidev_orchestrator.skill_manager import inject_skills_into_system_message
+from aidev_orchestrator.prompt_loader import load_versioned_prompt
 
 
 class DeveloperAgent(BaseAgent):
@@ -259,13 +264,13 @@ Fix the issues mentioned above."""
                         
                         # Validate tool exists
                         if tool_name not in self.available_tool_names:
-                            print(f"\n⛔ ERROR: Tool '{tool_name}' DOES NOT EXIST!")
+                            print(f"\n??? ERROR: Tool '{tool_name}' DOES NOT EXIST!")
                             print(f"Available tools: {', '.join(sorted(self.available_tool_names))}")
                             print("This tool will not be executed. Try a different approach.")
                             tool_failure_counts[tool_name] += 1
                             invalid_tool_calls += 1
                             if invalid_tool_calls >= 3:
-                                print("\nðŸ›‘ CIRCUIT BREAKER: Too many invalid tool calls")
+                                print("\n?????????? CIRCUIT BREAKER: Too many invalid tool calls")
                                 return False, "Agent tried invalid tools repeatedly", tool_calls
                             continue
                         
@@ -287,12 +292,12 @@ Fix the issues mentioned above."""
                             tool_failure_counts[tool_name] += 1
                             
                             if consecutive_same_tool >= 3:
-                                print(f"\n🛑 CIRCUIT BREAKER: Same tool '{tool_name}' failed {consecutive_same_tool} times in a row")
+                                print(f"\n???? CIRCUIT BREAKER: Same tool '{tool_name}' failed {consecutive_same_tool} times in a row")
                                 print(f"Stopping to prevent infinite loop. Last error: {output_str[:200]}")
                                 return False, f"Agent stuck in loop trying '{tool_name}' repeatedly", tool_calls
                         
-                        print(f"\n[Developer] 🔧 {tool_name}({tool_kwargs})")
-                        print(f"[Developer] ↪ {output_str[:150]}...")
+                        print(f"\n[Developer] ???? {tool_name}({tool_kwargs})")
+                        print(f"[Developer] ??? {output_str[:150]}...")
                         
                         # Track file operations
                         if tool_name == "write_file" and "success" in output_str.lower() and "true" in output_str.lower():
@@ -312,7 +317,7 @@ Fix the issues mentioned above."""
                         })
                     
                     elif isinstance(ev, StopEvent):
-                        print("\n[Developer] 🛑 Complete")
+                        print("\n[Developer] ???? Complete")
                         break
                     
                     elif isinstance(ev, AgentOutput):
@@ -336,7 +341,7 @@ Fix the issues mentioned above."""
                             else:
                                 repeated_action_streak = 0
                             if len(tool_calls) == 0 and repeated_action_streak >= 6:
-                                print("\n🛑 CIRCUIT BREAKER: Repeated text-mode Action loop without real tool calls.")
+                                print("\n???? CIRCUIT BREAKER: Repeated text-mode Action loop without real tool calls.")
                                 return False, "Agent stuck repeating Action text without invoking tools", tool_calls
 
                         # Stronger loop detection: repeated Action + Action Input signature in streamed text
@@ -368,23 +373,23 @@ Fix the issues mentioned above."""
                             max_stream_events=no_tool_call_max_stream_events,
                             min_elapsed_for_event_guard=no_tool_call_event_guard_min_elapsed_seconds,
                         ):
-                            print("\n🛑 CIRCUIT BREAKER: No tool calls executed within safety window.")
+                            print("\n???? CIRCUIT BREAKER: No tool calls executed within safety window.")
                             return False, "No tool calls executed (timeout/iteration guard)", tool_calls
                 
-                print(f"\n[Developer] ✅ Used {len(tool_calls)} tools")
+                print(f"\n[Developer] ??? Used {len(tool_calls)} tools")
                 
                 # Basic file verification
                 if files_created:
-                    print(f"[Developer] 📁 Created: {', '.join(files_created)}")
+                    print(f"[Developer] ???? Created: {', '.join(files_created)}")
                 if files_modified:
-                    print(f"[Developer] 📝 Modified: {', '.join(files_modified)}")
+                    print(f"[Developer] ???? Modified: {', '.join(files_modified)}")
             
             except asyncio.TimeoutError:
-                print("\n❌ Timeout")
+                print("\n??? Timeout")
                 return False, None, tool_calls
             
             except Exception as e:
-                print(f"\n❌ Error: {type(e).__name__}: {e}")
+                print(f"\n??? Error: {type(e).__name__}: {e}")
                 traceback.print_exc()
                 return False, None, tool_calls
         
@@ -396,7 +401,7 @@ Fix the issues mentioned above."""
                     final_answer_str = str(result.response)
                 return True, final_answer_str, tool_calls
             except Exception as e:
-                print(f"\nâŒ Error (non-streaming): {type(e).__name__}: {e}")
+                print(f"\n?????? Error (non-streaming): {type(e).__name__}: {e}")
                 traceback.print_exc()
                 return False, None, tool_calls
 
@@ -435,3 +440,4 @@ Use only available tools and finish tasks with concrete code changes."""
 
 DEFAULT_DEVELOPER_ENHANCED_PROMPT = """Build production-ready code with no placeholders.
 Use real logic, handle failure paths, and keep edits scoped to task requirements."""
+

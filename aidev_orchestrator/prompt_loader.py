@@ -10,7 +10,7 @@ _PROMPT_CACHE: Dict[str, Tuple[float, str]] = {}
 
 
 def _prompt_root() -> Path:
-    return Path(__file__).resolve().parent / "prompts"
+    return Path(__file__).resolve().parent.parent / "prompts"
 
 
 def _default_version(agent_key: str) -> str:
@@ -50,4 +50,5 @@ def load_versioned_prompt(
 
     _PROMPT_CACHE[cache_key] = (mtime, text)
     return text
+
 

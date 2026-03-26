@@ -9,6 +9,13 @@ env/
 .pytest_cache/
 .pytest_tmp/
 .test_tmp/
+.ruff_cache/
+.mypy_cache/
+.coverage
+build/
+dist/
+*.egg-info/
+*.log
 
 # IDE files
 .idea/
@@ -27,3 +34,4 @@ tests/__pycache__/
 .env
 
 projects/
+docs/plans/

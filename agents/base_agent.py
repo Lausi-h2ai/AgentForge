@@ -3,7 +3,8 @@ Improved BaseAgent with conversation history and better error handling.
 All variables initialized before use, proper method signatures.
 """
 from typing import List, Dict, Optional
-from llama_index.core.llms import ChatMessage
+
+from .llama_compat import ChatMessage
 
 
 class ConversationHistory:

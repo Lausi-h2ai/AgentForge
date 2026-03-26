@@ -203,7 +203,7 @@ if "pydantic" not in sys.modules:
     pydantic_stub.Field = _Field
     sys.modules["pydantic"] = pydantic_stub
 
-from orchestrator import Orchestrator
+from aidev_orchestrator.orchestrator import Orchestrator
 from agents.utils import resolve_model_config
 
 
@@ -533,9 +533,11 @@ def test_task_model_escalation_switches_to_stronger_model(monkeypatch):
     monkeypatch.setattr(orch, "_build_index_from_disk", lambda: None)
     monkeypatch.setattr(orch, "_git_commit", lambda *a, **k: None)
     monkeypatch.setattr(orch, "_find_placeholders_in_files", lambda *a, **k: [])
-    monkeypatch.setattr("orchestrator.execute_planning_stage", lambda _: orch.user_prompt)
+    monkeypatch.setattr("aidev_orchestrator.orchestrator.execute_planning_stage", lambda _: orch.user_prompt)
 
     asyncio.run(orch.run())
 
     assert "strong-model" in model_switches
     assert orch.last_completed_task_index == 0
+
+

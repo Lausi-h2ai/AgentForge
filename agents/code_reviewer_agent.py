@@ -8,13 +8,18 @@ import asyncio
 import traceback
 from typing import List, Dict, Optional, Tuple
 from .base_agent import BaseAgent
+from .llama_compat import (
+    AgentOutput,
+    AgentStream,
+    Context,
+    FunctionTool,
+    ReActAgent,
+    StopEvent,
+    ToolCallResult,
+)
 from .prompt_router import detect_task_type
-from llama_index.core.tools import FunctionTool
-from llama_index.core.agent import ReActAgent
-from llama_index.core.workflow import Context, StopEvent
-from llama_index.core.agent.workflow import AgentStream, ToolCallResult, AgentOutput
-from skill_manager import inject_skills_into_system_message
-from prompt_loader import load_versioned_prompt
+from aidev_orchestrator.skill_manager import inject_skills_into_system_message
+from aidev_orchestrator.prompt_loader import load_versioned_prompt
 
 
 class CircuitBreakerError(RuntimeError):
@@ -164,7 +169,7 @@ Include a confidence score (0.0-1.0) in the report if possible.
                             "result": str(ev.tool_output)[:500]
                         })
                         
-                        print(f"\n[Reviewer] 🔧 {ev.tool_name}({ev.tool_kwargs})")
+                        print(f"\n[Reviewer] ???? {ev.tool_name}({ev.tool_kwargs})")
                         
                         if ev.tool_name == 'submit_review':
                             submit_review_called = True
@@ -178,10 +183,10 @@ Include a confidence score (0.0-1.0) in the report if possible.
                             if self.logger:
                                 self.logger.log("INFO", f"submit_review called with {len(final_issues)} issues")
                             
-                            print(f"\n[Reviewer] ✅ Review submitted: {len(final_issues)} issues found")
+                            print(f"\n[Reviewer] ??? Review submitted: {len(final_issues)} issues found")
                     
                     elif isinstance(ev, StopEvent):
-                        print("\n[Reviewer] 🛑 Agent stopped")
+                        print("\n[Reviewer] ???? Agent stopped")
                         break
                     
                     elif isinstance(ev, AgentOutput):
@@ -195,11 +200,11 @@ Include a confidence score (0.0-1.0) in the report if possible.
             await asyncio.wait_for(collect_events(), timeout=self.review_timeout)
             
         except asyncio.TimeoutError:
-            print(f"\n⚠️  Review TIMEOUT after {self.review_timeout}s")
+            print(f"\n??????  Review TIMEOUT after {self.review_timeout}s")
             
             if not submit_review_called:
-                print("❌ CRITICAL: submit_review was NOT called within timeout")
-                print("❌ Reviewer failed to complete task")
+                print("??? CRITICAL: submit_review was NOT called within timeout")
+                print("??? Reviewer failed to complete task")
                 
                 final_issues = [{
                     "severity": "critical",
@@ -231,7 +236,7 @@ Include a confidence score (0.0-1.0) in the report if possible.
                 pass
 
         except Exception as e:
-            print(f"\n❌ Error during review: {type(e).__name__}: {e}")
+            print(f"\n??? Error during review: {type(e).__name__}: {e}")
             traceback.print_exc()
             
             if not submit_review_called:
@@ -244,7 +249,7 @@ Include a confidence score (0.0-1.0) in the report if possible.
         # Validate final result
         if final_issues is None:
             if not submit_review_called:
-                print("❌ No submit_review call detected; review is invalid.")
+                print("??? No submit_review call detected; review is invalid.")
                 final_issues = [{
                     "severity": "critical",
                     "type": "integration_issue",
@@ -254,11 +259,11 @@ Include a confidence score (0.0-1.0) in the report if possible.
                     "suggestion": "Retry review and ensure submit_review is called exactly once."
                 }]
             else:
-                print("⚠️  No issues extracted, assuming clean code")
+                print("??????  No issues extracted, assuming clean code")
                 final_issues = []
         
         if not isinstance(final_issues, list):
-            print(f"⚠️  final_issues not a list (type: {type(final_issues)}), wrapping")
+            print(f"??????  final_issues not a list (type: {type(final_issues)}), wrapping")
             final_issues = [final_issues] if final_issues else []
         
         # Validate issue structure
@@ -462,3 +467,4 @@ Action Input: {"report": {"issues": [...], "confidence": 0.7}}
 
 Use [] for issues if clean. Do not use alternate wrappers like {"issues": [...]}.
 """
+

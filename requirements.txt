@@ -1,4 +1,9 @@
-docker 
+# Legacy compatibility file.
+# Preferred install paths:
+#   pip install -e .[dev]
+#   pip install -e .[ollama,memory,tester]
+#   pip install -e .[google]
+docker
 python-dotenv
 llama-index-core
 llama-index-llms-ollama

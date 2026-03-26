@@ -2,11 +2,15 @@
 TesterAgent - Runs quality gates (linting, testing) in Docker.
 Maintains backward compatibility with original implementation.
 """
-import docker
 import os
 import json
 from .base_agent import BaseAgent
 from .utils import parse_json_from_response
+
+try:
+    import docker
+except ImportError:  # pragma: no cover - exercised only in minimal installs
+    docker = None
 
 
 class TesterAgent(BaseAgent):
@@ -24,6 +28,10 @@ class TesterAgent(BaseAgent):
         
         # Initialize instance variables AFTER super().__init__()
         self.work_dir = os.path.abspath(work_dir)
+        if docker is None:
+            raise ModuleNotFoundError(
+                "Docker SDK is not installed. Install the dev or tester extras to use TesterAgent."
+            )
         self.docker_client = docker.from_env()
     
     def generate_test_plan(self, technical_architecture, logger):

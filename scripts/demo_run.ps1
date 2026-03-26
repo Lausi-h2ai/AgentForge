@@ -3,10 +3,11 @@
 
 $ErrorActionPreference = 'Stop'
 
-$promptPath = Join-Path $PSScriptRoot '..\demo_prompt.txt'
-@"
-Build a tiny FastAPI app with one endpoint GET /health that returns {\"status\":\"ok\"}.
-Add a README with setup instructions.
-"@ | Set-Content -Encoding UTF8 $promptPath
+$rootPath = Resolve-Path (Join-Path $PSScriptRoot '..')
+$promptPath = Join-Path $rootPath 'examples\prompts\demo_prompt.txt'
 
-python ..\orchestrator.py demo_project --prompt $promptPath --new
+if (-not (Test-Path $promptPath)) {
+    throw "Demo prompt not found at $promptPath"
+}
+
+python (Join-Path $rootPath 'orchestrator.py') demo_project --prompt $promptPath --new

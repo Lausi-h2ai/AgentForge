@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aidev-orchestrator"
+version = "0.1.0"
+description = "A blackboard-style multi-agent coding orchestrator for planning, implementing, reviewing, and validating software projects."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+  { name = "Open-source contributors" }
+]
+dependencies = [
+  "gitpython",
+  "pydantic>=2,<3",
+  "python-dotenv",
+]
+
+[project.optional-dependencies]
+dev = [
+  "black>=24.0.0",
+  "pytest>=8.0.0",
+  "ruff>=0.3.0",
+]
+google = [
+  "google-api-core",
+  "llama-index-core",
+  "llama-index-embeddings-google-genai",
+  "llama-index-llms-google-genai",
+]
+memory = [
+  "duckdb",
+  "hippocampai[ollama]",
+  "httpx",
+]
+monitoring = [
+  "flask",
+]
+ollama = [
+  "llama-index-core",
+  "llama-index-embeddings-ollama",
+  "llama-index-llms-ollama",
+]
+tester = [
+  "docker",
+]
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+include = ["aidev_orchestrator*", "agents*", "memory*", "orchestrator_core*", "tools*"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+

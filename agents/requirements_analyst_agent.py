@@ -5,7 +5,7 @@ Maintains backward compatibility with original implementation.
 from .base_agent import BaseAgent
 from .utils import parse_json_from_response
 from .prompt_router import detect_requirements_profile
-from prompt_loader import load_versioned_prompt
+from aidev_orchestrator.prompt_loader import load_versioned_prompt
 
 
 DEFAULT_REQUIREMENTS_ANALYST_PROMPT = """You are RequirementsAnalystAgent.
@@ -88,3 +88,4 @@ class RequirementsAnalystAgent(BaseAgent):
             "questions": [],
             "refined_prompt": user_prompt
         }
+

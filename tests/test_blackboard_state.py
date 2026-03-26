@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from orchestrator import Orchestrator
+from aidev_orchestrator.orchestrator import Orchestrator
 from orchestrator_core.blackboard import BlackboardState
 
 
@@ -25,3 +25,4 @@ def test_orchestrator_properties_proxy_to_blackboard():
     assert orch.blackboard.last_completed_task_index == 3
     assert orch.blackboard.files["x.py"] == "print(1)"
     assert 1 in orch.blackboard.task_checkpoints
+

@@ -8,7 +8,27 @@ from typing import Dict, Any, List, Literal, Optional
 from tools import get_code_summary
 from tools.universal_refactoring import add_code_block as _add_code_block,    refactor_rename_symbol as _refactor_rename_symbol, delete_code_block as _delete_code_block
 
-from pydantic import BaseModel, Field
+try:
+    from pydantic import BaseModel, Field
+except ImportError:  # pragma: no cover - exercised only in minimal installs
+    class BaseModel:
+        def __init__(self, **kwargs):
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+
+        @classmethod
+        def model_validate(cls, obj):
+            if isinstance(obj, cls):
+                return obj
+            if isinstance(obj, dict):
+                return cls(**obj)
+            return cls()
+
+        def model_dump(self):
+            return dict(self.__dict__)
+
+    def Field(*_args, **_kwargs):
+        return None
 
 
 class ReviewIssue(BaseModel):
@@ -541,7 +561,6 @@ class OrchestratorTools:
             }
 
     def get_code_summary(self, filename: str, **kwargs) -> Dict[str, Any]:
-        print("required filename", filename)
         filename = self._validate_file_path(filename)
         filepath = os.path.join(self.orchestrator.project_dir, filename)
         summary = get_code_summary(filepath)
@@ -553,10 +572,8 @@ class OrchestratorTools:
 
          Args:
              report: A ReviewReport object containing a list of all issues found.
-         """
+        """
         # The 'report' argument will be a validated Pydantic object
-        print("[DEBUG] submit_review input")
-        print(report if report is not None else kwargs)
         if report is None:
             if "report" in kwargs:
                 report = kwargs["report"]
@@ -566,8 +583,6 @@ class OrchestratorTools:
             validated_report = ReviewReport.model_validate(report)
         else:
             validated_report = report
-        print("validated input")
-        print(validated_report)
         issues_list: List[Dict[str, Any]] = []
         for issue in validated_report.issues:
             if isinstance(issue, ReviewIssue):
@@ -592,7 +607,6 @@ class OrchestratorTools:
                     description=str(issue),
                     suggestion="Review issue details and apply fix."
                 ).model_dump())
-        print("[DEBUG] submit_review output ", issues_list)
         return {
             "success": True,
             "message": f"Review submitted with {len(issues_list)} issue(s)",

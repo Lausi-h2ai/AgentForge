@@ -5,7 +5,7 @@ Improved JSON parsing and validation.
 from .base_agent import BaseAgent
 from .utils import parse_json_from_response
 from .prompt_router import detect_architecture_profile
-from prompt_loader import load_versioned_prompt
+from aidev_orchestrator.prompt_loader import load_versioned_prompt
 import json
 import re
 
@@ -183,3 +183,4 @@ PREVIOUS ATTEMPT FAILED. Fix formatting and include all required keys exactly.
         if len(data["file_structure"]) == 0:
             return False
         return True
+

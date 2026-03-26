@@ -9,16 +9,17 @@ import os
 from typing import Optional, Dict
 from enum import Enum
 
+from .llama_compat import (
+    CallbackManager,
+    ChatMessage,
+    GoogleGenAI,
+    GoogleGenAIEmbedding,
+    Ollama,
+    OllamaEmbedding,
+    Settings,
+    TokenCountingHandler,
+)
 from orchestrator_core.model_config import get_phase_model_overrides, resolve_model_config
-
-# LlamaIndex imports
-from llama_index.llms.google_genai import GoogleGenAI
-from llama_index.embeddings.google_genai import GoogleGenAIEmbedding
-from llama_index.core import Settings
-from llama_index.core.llms import ChatMessage
-from llama_index.llms.ollama import Ollama
-from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
-from llama_index.embeddings.ollama import OllamaEmbedding
 
 # Google API imports
 try:

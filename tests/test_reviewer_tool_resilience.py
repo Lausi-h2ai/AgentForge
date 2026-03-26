@@ -9,7 +9,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from agents.code_reviewer_agent import CodeReviewerAgent
-from orchestrator_tools import OrchestratorTools
+from aidev_orchestrator.orchestrator_tools import OrchestratorTools
 
 
 def _make_reviewer_stub():
@@ -75,3 +75,4 @@ def test_validate_file_path_blocks_workspace_parent_traversal():
     tools = OrchestratorTools(_DummyOrch(tmp_path))
     with pytest.raises(ValueError):
         tools._validate_file_path("workspace/../outside.py")
+

@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from skill_manager import SkillManager
+from aidev_orchestrator.skill_manager import SkillManager
 
 
 def _write_skill(root: Path, name: str, body: str):
@@ -88,3 +88,4 @@ def test_auto_detect_keywords():
     skills = sm.detect_relevant_skills("Build a React component")
 
     assert "react-skill" in skills
+

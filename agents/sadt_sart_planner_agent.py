@@ -15,7 +15,7 @@ import json
 import os
 import re
 from typing import List, Optional
-from prompt_loader import load_versioned_prompt
+from aidev_orchestrator.prompt_loader import load_versioned_prompt
 
 
 DEFAULT_PLANNER_BASE_PROMPT = """You are a task planning expert for software projects.
@@ -146,9 +146,9 @@ class SADTSARTPlannerAgent(BaseAgent):
         complexity = self._detect_project_complexity(project_context)
 
         if logger:
-            logger.log("INFO", f"📊 Detected project complexity: {complexity.upper()}")
+            logger.log("INFO", f"???? Detected project complexity: {complexity.upper()}")
 
-        print(f"\n📊 Project Complexity: {complexity.upper()}")
+        print(f"\n???? Project Complexity: {complexity.upper()}")
 
         # Adjust instructions HEAVILY based on complexity
         if complexity == "simple":
@@ -449,7 +449,7 @@ Task strategy:
 - One top-level task = one major feature area or module
 - Subtasks = concrete, verifiable file operations
 - Each subtask should be completable in <1 hour by an agent
-- Organize by component (backend models → endpoints → frontend UI)
+- Organize by component (backend models ??? endpoints ??? frontend UI)
 - Include validation/error handling explicitly
 - Separate data layer from API layer from UI layer
 """
@@ -471,23 +471,23 @@ Task strategy:
 
 **AGENTS CAN DO:**
 
-✅ Create files with content
-✅ Modify existing files  
-✅ Read files
-✅ Delete files
+??? Create files with content
+??? Modify existing files  
+??? Read files
+??? Delete files
 
 **AGENTS CANNOT DO:**
 
-❌ Run commands (pip install, pytest, python script.py)
-❌ Execute applications
-❌ Git operations (handled automatically)
-❌ Deploy anything
+??? Run commands (pip install, pytest, python script.py)
+??? Execute applications
+??? Git operations (handled automatically)
+??? Deploy anything
 
 **IMPORTANT: Tool/Framework Names Are OK In Descriptions**
 
-✅ GOOD: "Create test_app.py with pytest test functions"
-✅ GOOD: "Write code using Ollama framework"
-❌ BAD: "Run pytest command" or "Execute Ollama inference"
+??? GOOD: "Create test_app.py with pytest test functions"
+??? GOOD: "Write code using Ollama framework"
+??? BAD: "Run pytest command" or "Execute Ollama inference"
 
 The word "pytest" or "Ollama" is fine - just don't ask agent to RUN it!
 
@@ -573,10 +573,10 @@ Organize by feature/component area. No installation/execution tasks."""
 
             if not validation_errors:
                 if logger:
-                    logger.log("INFO", f"✅ Valid workplan generated on attempt {attempt + 1}")
+                    logger.log("INFO", f"??? Valid workplan generated on attempt {attempt + 1}")
                 total_tasks = len(plan.get('tasks', []))
                 total_subtasks = sum(len(t.get('subtasks', [])) for t in plan.get('tasks', []))
-                print(f"✅ Plan accepted: {total_tasks} top-level tasks, {total_subtasks} subtasks")
+                print(f"??? Plan accepted: {total_tasks} top-level tasks, {total_subtasks} subtasks")
                 return plan
 
             if logger:
@@ -600,10 +600,10 @@ Organize by feature/component area. No installation/execution tasks."""
 
             if corrected_plan:
                 if logger:
-                    logger.log("INFO", f"✅ Corrected workplan accepted on attempt {attempt + 1}")
+                    logger.log("INFO", f"??? Corrected workplan accepted on attempt {attempt + 1}")
                 total_tasks = len(corrected_plan.get('tasks', []))
                 total_subtasks = sum(len(t.get('subtasks', [])) for t in corrected_plan.get('tasks', []))
-                print(f"✅ Plan accepted after correction: {total_tasks} top-level tasks, {total_subtasks} subtasks")
+                print(f"??? Plan accepted after correction: {total_tasks} top-level tasks, {total_subtasks} subtasks")
                 return corrected_plan
 
             # Fallback: continue normal regeneration with explicit failure feedback.
@@ -613,9 +613,9 @@ Organize by feature/component area. No installation/execution tasks."""
             prompt += "\nRegenerate a complete valid plan that fixes all errors."
 
         if logger:
-            logger.log("ERROR", "❌ Failed to generate valid workplan after all attempts")
+            logger.log("ERROR", "??? Failed to generate valid workplan after all attempts")
 
-        print(f"\n❌ Plan generation failed after {max_retries} attempts")
+        print(f"\n??? Plan generation failed after {max_retries} attempts")
 
         return None
 
@@ -767,20 +767,20 @@ Generate {action_guidance}.
 
 **AGENTS CAN ONLY:**
 
-✅ Create/modify/read/delete files
-✅ Write code to files
-✅ Structure/organize files
+??? Create/modify/read/delete files
+??? Write code to files
+??? Structure/organize files
 
-❌ Execute commands or run applications
-❌ Install packages
-❌ Deploy
+??? Execute commands or run applications
+??? Install packages
+??? Deploy
 
 **Using framework names OK in descriptions:**
 
-✅ GOOD: "Create test.py with pytest test functions"
-✅ GOOD: "Add FastAPI route decorator and validation"
-❌ BAD: "Run pytest command"
-❌ BAD: "Execute the application"
+??? GOOD: "Create test.py with pytest test functions"
+??? GOOD: "Add FastAPI route decorator and validation"
+??? BAD: "Run pytest command"
+??? BAD: "Execute the application"
 
 **JSON FORMAT:**
 
@@ -808,7 +808,7 @@ Generate {action_guidance}.
 COMPLEXITY: {complexity.upper()}
 
 Generate {max_actions} atomic file operations. 
-For complex projects: separate by major concern (model → validation → each HTTP verb → error handling).
+For complex projects: separate by major concern (model ??? validation ??? each HTTP verb ??? error handling).
 For medium: group logically (models, endpoints, UI).
 For simple: combine everything.
 
@@ -1189,9 +1189,9 @@ Technical Architecture:
                     remaining_actions -= 1
 
         if max_total_actions is None:
-            logger.log("INFO", f"✅ Generated {len(final_plan_strings)} atomic action items (no action budget limit)")
+            logger.log("INFO", f"??? Generated {len(final_plan_strings)} atomic action items (no action budget limit)")
         else:
-            logger.log("INFO", f"✅ Generated {len(final_plan_strings)} atomic action items (budget {max_total_actions})")
+            logger.log("INFO", f"??? Generated {len(final_plan_strings)} atomic action items (budget {max_total_actions})")
 
         run_command = self._extract_run_command(technical_architecture, logger)
 
@@ -1219,3 +1219,4 @@ Technical Architecture:
             return "python manage.py runserver"
         else:
             return "python app.py"
+

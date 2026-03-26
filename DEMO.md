@@ -1,38 +1,29 @@
-﻿# Demo: 60-Second Smoke Run
+# Demo Run
 
-This demo runs a tiny project through the pipeline to show planning, dev, review, and state saving.
+The fastest way to try the orchestrator is to run the included public demo prompt.
 
-## 1) Create a tiny prompt
-```
-Build a tiny FastAPI app with one endpoint GET /health that returns {"status":"ok"}.
-Add a README with setup instructions.
-```
+## Command
 
-Save as `demo_prompt.txt`.
-
-## 2) Run orchestrator
-```
-python orchestrator.py demo_project --prompt demo_prompt.txt --new
+```bash
+python orchestrator.py demo_project --prompt examples/prompts/demo_prompt.txt --new
 ```
 
-Or use the helper script (works from repo root):
+## PowerShell helper
+
+From the repo root:
+
 ```powershell
 .\scripts\demo_run.ps1
 ```
 
-Optional: use different models for planning vs execution
-```
-python orchestrator.py demo_project --prompt demo_prompt.txt --new \
-  --planning-model qwen2.5:latest \
-  --execution-model qwen3-coder:latest
-```
-
-## 3) Inspect output
-- Project code: `projects/demo_project/workspace/`
-- State: `projects/demo_project/state.json`
-- Logs: `logs/`
-
 ## Expected outcome
-- `backend/app/main.py` (or equivalent) with `/health` endpoint
-- README created
-- Review completed with confidence score
+
+- a generated project workspace under `projects/demo_project/workspace/`
+- saved state and checkpoints under `projects/demo_project/`
+- logs under `logs/`
+
+## Notes
+
+- Add `--with-tests` to run the optional testing stage.
+- Add `--google` to switch providers if you installed the Google extra and configured credentials.
+- Use the prompt in `examples/prompts/demo_prompt.txt` as a starting point for your own experiments.
