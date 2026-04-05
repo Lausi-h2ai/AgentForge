@@ -168,6 +168,7 @@ def configure_llm_and_embed(provider="ollama", model=None):
         llm_args = {
             "model": model or "qwen3-coder-next:cloud",
             "request_timeout": 3000.0,
+            "thinking": os.getenv("OLLAMA_THINKING", "false").lower() == "true",
             #"context_window": 32768,
         }
     else:
