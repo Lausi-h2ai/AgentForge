@@ -22,3 +22,15 @@ jobs:
 
       - name: Run tests
         run: pytest -q
+
+  openai-compatible:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install OpenAI-compatible provider
+        run: python -m pip install -e .[dev,openai]
+      - name: Verify provider with local scripted HTTP server
+        run: python -m pytest -q tests/test_openai_provider.py

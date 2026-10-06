@@ -1,0 +1,20 @@
+flowchart TD
+    U[User prompt] --> P[Requirements → Architecture → SADT/SART planning]
+    P --> C[Orchestrator control loop]
+    C --> D[Developer: model ↔ tools]
+    D --> R[Reviewer: model ↔ read-only tools]
+    R -->|Blocking findings → feedback → retry| D
+    R -->|Review passes| T[Optional test gate]
+    T -->|Failure → retry| D
+    T -->|Pass or disabled| F[Complete task → next task]
+    F --> C
+    C -->|All tasks processed| DOC[Documentation and final report]
+    P --> B[(BlackboardState)]
+    C <--> B
+    D -->|Artifacts via stages/tools| B
+    R -->|Findings via review stage| B
+    T -->|Results via testing stage| B
+    B --> S[(state.json + checkpoints.json)]
+    S -->|Resume| C
+    D -.-> M[(Optional HippocampAI memory)]
+    R -.-> M

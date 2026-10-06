@@ -185,6 +185,33 @@ def test_development_stage_success():
     assert "a.py" in cp.files_modified
 
 
+def test_development_preserves_requirements_when_plan_details_drift():
+    orch = _DummyOrch(_mk_tmp_dir("dev_requirements"))
+    orch.user_prompt = "Retain ASCII letters and digits; replace underscores with hyphens."
+    captured = []
+
+    async def run_developer(task):
+        captured.append(task)
+        return _DummyDevResult(success=True, tool_calls=[_DummyToolCall(
+            "write_file", {"filename": "slugify.py"}
+        )])
+
+    orch._run_developer_agent = run_developer
+    asyncio.run(execute_development_stage(StageContext(
+        orch, task="Implement a Unicode slugifier", checkpoint=_DummyCheckpoint(),
+        current_task_index=0
+    )))
+    assert orch.user_prompt in captured[0]
+    assert "take precedence" in captured[0]
+    from agents.prompt_router import detect_task_type
+
+    wrapped = (
+        "PROJECT REQUIREMENTS: Write tests and fix errors.\n"
+        "CURRENT TASK (implement only this task now):\nCreate slugify.py"
+    )
+    assert detect_task_type(wrapped) == "create_file"
+
+
 def test_testing_stage_retry_on_failure():
     tmp_path = _mk_tmp_dir("test")
     orch = _DummyOrch(tmp_path)

@@ -3,6 +3,8 @@
 import os
 from typing import Dict, Optional, Tuple
 
+from .provider_config import resolve_provider
+
 
 def resolve_model_config(provider: str) -> Tuple[Optional[str], Optional[str], Dict[str, str]]:
     """
@@ -12,7 +14,7 @@ def resolve_model_config(provider: str) -> Tuple[Optional[str], Optional[str], D
       - LLM_MODEL
       - LLM_ESCALATION_MODEL
     """
-    provider_key = (provider or "").strip().lower() or "ollama"
+    provider_key = resolve_provider(provider)
 
     base_model = (os.getenv("LLM_MODEL") or "").strip() or None
     escalation_model = (os.getenv("LLM_ESCALATION_MODEL") or "").strip() or None

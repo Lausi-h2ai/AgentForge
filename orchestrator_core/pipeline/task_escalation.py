@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Dict, Optional, Set
 
 from orchestrator_core.model_config import resolve_model_config
+from orchestrator_core.provider_config import PROVIDERS
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -69,7 +70,7 @@ class TaskEscalationPolicy:
             if agent.strip()
         }
         escalation_models = {}
-        for provider in ("ollama", "google"):
+        for provider in PROVIDERS:
             _, _, provider_models = resolve_model_config(provider)
             escalation_models.update(provider_models)
 

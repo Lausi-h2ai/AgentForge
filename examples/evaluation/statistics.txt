@@ -1,0 +1,5 @@
+Build a small Python project using only the standard library. At the workspace root,
+create statistics.py exporting summarize(values) -> dict. For a nonempty list of
+numbers, return exactly count, min, max, mean; mean is the arithmetic average. Handle
+negative numbers and floating-point values. Empty input raises ValueError. Include
+unit tests and a README with the test command. No web UI or server.

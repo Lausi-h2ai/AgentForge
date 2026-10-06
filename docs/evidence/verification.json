@@ -1,0 +1,44 @@
+{
+  "captured_at_utc": "2026-10-06T11:16:16.021299+00:00",
+  "python": "3.11.9",
+  "platform": "Windows",
+  "git_revision": "8bff44adac9c2b0044502a2883c07ddab3c5f3b6",
+  "working_tree": "uncommitted portfolio and provider updates",
+  "provider_dependencies": {
+    "llama-index-core": "0.14.25",
+    "llama-index-llms-openai-like": "0.8.1",
+    "llama-index-embeddings-openai-like": "0.4.0",
+    "openai": "2.54.0"
+  },
+  "checks": [
+    {
+      "command": "python -m pytest -q",
+      "exit_code": 0,
+      "summary": [
+        ".....................................................................    [100%]",
+        "69 passed in 6.45s"
+      ]
+    },
+    {
+      "command": "python -m ruff check scripts/portfolio_demo.py scripts/evaluate_portfolio.py scripts/portfolio_acceptance.py scripts/render_demo_recording.py tests/test_portfolio_evaluation.py orchestrator_core/provider_config.py agents/llama_compat.py tests/test_openai_provider.py tests/openai_transport_probe.py aidev_orchestrator/__init__.py",
+      "exit_code": 0,
+      "summary": [
+        "All checks passed!"
+      ]
+    },
+    {
+      "command": "python -m black --check scripts/portfolio_demo.py scripts/evaluate_portfolio.py scripts/portfolio_acceptance.py scripts/render_demo_recording.py tests/test_portfolio_evaluation.py orchestrator_core/provider_config.py agents/llama_compat.py tests/test_openai_provider.py tests/openai_transport_probe.py aidev_orchestrator/__init__.py",
+      "exit_code": 0,
+      "summary": []
+    },
+    {
+      "command": "python scripts/portfolio_demo.py",
+      "exit_code": 0,
+      "summary": [
+        "Offline demo completed; see offline-demo.json"
+      ]
+    }
+  ],
+  "live_evaluation": "No live model benchmark; real SDK/agent transport verified against local scripted HTTP/SSE server",
+  "scope": "Offline control-flow and protocol verification; no claims about model quality"
+}

@@ -207,6 +207,33 @@ from aidev_orchestrator.orchestrator import Orchestrator
 from agents.utils import resolve_model_config
 
 
+@pytest.fixture(autouse=True)
+def offline_model_configuration(monkeypatch):
+    """Keep orchestration tests offline with partially installed real SDK extras."""
+    import aidev_orchestrator.orchestrator as runtime
+
+    class OfflineLLM:
+        def __init__(self, model=None, temperature=0, **kwargs):
+            self.model = model
+            self.temperature = temperature
+
+        def chat(self, messages):
+            from types import SimpleNamespace
+            return SimpleNamespace(message=SimpleNamespace(content="# Offline documentation"))
+
+    class Counter:
+        llm_token_counts = []
+        total_llm_token_count = 0
+        prompt_llm_token_count = 0
+        total_completion_tokens = 0
+
+    monkeypatch.setattr(
+        runtime, "configure_llm_and_embed",
+        lambda provider, model=None: (OfflineLLM, {"model": model or "offline-test"}, Counter()),
+    )
+    monkeypatch.setenv("HIPPOCAMP_AI_ENABLED", "false")
+
+
 class DummyConversation:
     def __init__(self):
         self.history = []

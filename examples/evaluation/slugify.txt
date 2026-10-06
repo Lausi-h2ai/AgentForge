@@ -1,0 +1,5 @@
+Build a small Python project using only the standard library. At the workspace root,
+create slugify.py exporting slugify(text: str) -> str. Lowercase ASCII letters, retain
+ASCII letters and digits, replace each run of other characters with a single hyphen,
+and remove leading/trailing hyphens. Empty or all-punctuation input returns an empty
+string. Include unit tests and a README with the test command. No web UI or server.

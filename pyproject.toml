@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "aidev-orchestrator"
 version = "0.1.0"
-description = "A blackboard-style multi-agent coding orchestrator for planning, implementing, reviewing, and validating software projects."
+description = "AgentForge: a blackboard-style multi-agent coding orchestrator for planning, implementation, review, and validation."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -29,6 +29,11 @@ google = [
   "llama-index-core",
   "llama-index-embeddings-google-genai",
   "llama-index-llms-google-genai",
+]
+openai = [
+  "llama-index-core>=0.14,<0.15",
+  "llama-index-llms-openai-like>=0.8,<0.9",
+  "llama-index-embeddings-openai-like>=0.4,<0.5",
 ]
 memory = [
   "duckdb",
@@ -56,6 +61,9 @@ include = ["aidev_orchestrator*", "agents*", "memory*", "orchestrator_core*", "t
 [tool.black]
 line-length = 100
 target-version = ["py311"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100

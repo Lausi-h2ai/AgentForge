@@ -1,4 +1,3 @@
-import codecs
 import json
 import os
 from pathlib import Path
@@ -250,18 +249,6 @@ class OrchestratorTools:
             }
         
         try:
-            # CRITICAL FIX: Decode escape sequences
-            if isinstance(old_text, str) and '\\n' in old_text:
-                try:
-                    old_text = codecs.decode(old_text, 'unicode_escape')
-                except:
-                    old_text = old_text.replace('\\n', '\n').replace('\\t', '\t')
-            if isinstance(new_text, str) and '\\n' in new_text:
-                try:
-                    new_text = codecs.decode(new_text, 'unicode_escape')
-                except:
-                    new_text = new_text.replace('\\n', '\n').replace('\\t', '\t')
-            
             # Read current content
             with open(filepath, 'r', encoding='utf-8') as f:
                 current_content = f.read()
@@ -312,15 +299,6 @@ class OrchestratorTools:
             }
         
         try:
-            # CRITICAL FIX: Decode escape sequences
-            if isinstance(content_to_insert, str) and '\\n' in content_to_insert:
-                try:
-                    content_to_insert = codecs.decode(content_to_insert, 'unicode_escape')
-                except:
-                    # Fallback to manual replacement
-                    content_to_insert = content_to_insert.replace('\\n', '\n')
-                    content_to_insert = content_to_insert.replace('\\t', '\t')
-            
             # Read current content
             with open(filepath, 'r', encoding='utf-8') as f:
                 current_content = f.read()
@@ -497,7 +475,7 @@ class OrchestratorTools:
     def write_file(self, filename, content):
         """
         Create a new file with content - robust version.
-        Tries multiple strategies to handle escape sequences.
+        Preserve Unicode and literal escapes in the supplied source text.
         """
         try:
             validated_filename = self._validate_file_path(filename)
@@ -514,29 +492,10 @@ class OrchestratorTools:
         try:
             filepath.parent.mkdir(parents=True, exist_ok=True)
             
-            # Strategy 1: Try unicode_escape decode
-            decoded_content = content
-            if isinstance(content, str) and '\\n' in content:
-                try:
-                    decoded_content = codecs.decode(content, 'unicode_escape')
-                    print(f"[write_file] Decoded escape sequences in content")
-                except Exception as e1:
-                    # Strategy 2: Manual replacement
-                    try:
-                        decoded_content = content.replace('\\n', '\n')
-                        decoded_content = decoded_content.replace('\\t', '\t')
-                        decoded_content = decoded_content.replace('\\r', '\r')
-                        decoded_content = decoded_content.replace("\\'", "'")
-                        decoded_content = decoded_content.replace('\\"', '"')
-                        print(f"[write_file] Applied manual escape replacements")
-                    except Exception as e2:
-                        # Strategy 3: Use as-is
-                        print(f"[write_file] Using content as-is (no decoding needed)")
-                        decoded_content = content
-            
+            # Tool arguments are already decoded by the transport. Preserve source text.
             # Write the file
             with open(filepath, 'w', encoding='utf-8') as f:
-                f.write(decoded_content)
+                f.write(content)
             
             # Auto-format if available
             try:

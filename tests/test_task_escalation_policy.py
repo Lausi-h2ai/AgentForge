@@ -83,7 +83,7 @@ def test_policy_missing_provider_model_does_not_escalate():
 @pytest.mark.parametrize(
     "env_name,expected_models",
     [
-        ("LLM_ESCALATION_MODEL", {"ollama": "shared-strong", "google": "shared-strong"}),
+        ("LLM_ESCALATION_MODEL", {"openai": "shared-strong", "ollama": "shared-strong", "google": "shared-strong"}),
     ],
 )
 def test_policy_from_env_resolves_shared_escalation_model(monkeypatch, env_name, expected_models):

@@ -5,6 +5,7 @@ lightweight tooling when the full LlamaIndex stack is not installed.
 Runtime usage still raises a clear error when a missing dependency is
 actually required.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -22,10 +23,6 @@ try:
     from llama_index.core.llms import ChatMessage
     from llama_index.core.tools import FunctionTool
     from llama_index.core.workflow import Context, StopEvent
-    from llama_index.embeddings.google_genai import GoogleGenAIEmbedding
-    from llama_index.embeddings.ollama import OllamaEmbedding
-    from llama_index.llms.google_genai import GoogleGenAI
-    from llama_index.llms.ollama import Ollama
 except ImportError as exc:  # pragma: no cover - only exercised in minimal installs
     LLAMA_INDEX_AVAILABLE = False
     LLAMA_INDEX_IMPORT_ERROR = exc
@@ -34,7 +31,7 @@ except ImportError as exc:  # pragma: no cover - only exercised in minimal insta
         raise ModuleNotFoundError(
             "LlamaIndex dependencies are not installed. "
             "Install the appropriate extras, for example `pip install -e .[ollama]` "
-            "or `pip install -e .[google]`."
+            "or `pip install -e .[openai]`."
         ) from LLAMA_INDEX_IMPORT_ERROR
 
     def _load_runtime(module_path: str, attr_name: str):
@@ -94,29 +91,6 @@ except ImportError as exc:  # pragma: no cover - only exercised in minimal insta
     class AgentOutput:
         response = ""
 
-    class GoogleGenAI:
-        def __new__(cls, *_args: Any, **_kwargs: Any):
-            runtime_cls = _load_runtime("llama_index.llms.google_genai", "GoogleGenAI")
-            return runtime_cls(*_args, **_kwargs)
-
-    class GoogleGenAIEmbedding:
-        def __new__(cls, *_args: Any, **_kwargs: Any):
-            runtime_cls = _load_runtime(
-                "llama_index.embeddings.google_genai",
-                "GoogleGenAIEmbedding",
-            )
-            return runtime_cls(*_args, **_kwargs)
-
-    class Ollama:
-        def __new__(cls, *_args: Any, **_kwargs: Any):
-            runtime_cls = _load_runtime("llama_index.llms.ollama", "Ollama")
-            return runtime_cls(*_args, **_kwargs)
-
-    class OllamaEmbedding:
-        def __new__(cls, *_args: Any, **_kwargs: Any):
-            runtime_cls = _load_runtime("llama_index.embeddings.ollama", "OllamaEmbedding")
-            return runtime_cls(*_args, **_kwargs)
-
     class Document:
         def __new__(cls, *_args: Any, **_kwargs: Any):
             runtime_cls = _load_runtime("llama_index.core", "Document")
@@ -127,3 +101,32 @@ except ImportError as exc:  # pragma: no cover - only exercised in minimal insta
         def from_documents(cls, *_args: Any, **_kwargs: Any) -> "VectorStoreIndex":
             runtime_cls = _load_runtime("llama_index.core", "VectorStoreIndex")
             return runtime_cls.from_documents(*_args, **_kwargs)
+
+
+def _provider_class(module_path: str, name: str, extra: str):
+    """Resolve only the selected provider; other provider extras stay optional."""
+
+    class LazyProvider:
+        def __new__(cls, *args, **kwargs):
+            try:
+                runtime_class = getattr(import_module(module_path), name)
+            except ImportError as exc:
+                raise ModuleNotFoundError(
+                    f"Install the '{extra}' extra to use {name}: pip install -e .[{extra}]"
+                ) from exc
+            return runtime_class(*args, **kwargs)
+
+    LazyProvider.__name__ = name
+    return LazyProvider
+
+
+GoogleGenAI = _provider_class("llama_index.llms.google_genai", "GoogleGenAI", "google")
+GoogleGenAIEmbedding = _provider_class(
+    "llama_index.embeddings.google_genai", "GoogleGenAIEmbedding", "google"
+)
+Ollama = _provider_class("llama_index.llms.ollama", "Ollama", "ollama")
+OllamaEmbedding = _provider_class("llama_index.embeddings.ollama", "OllamaEmbedding", "ollama")
+OpenAILike = _provider_class("llama_index.llms.openai_like", "OpenAILike", "openai")
+OpenAILikeEmbedding = _provider_class(
+    "llama_index.embeddings.openai_like", "OpenAILikeEmbedding", "openai"
+)

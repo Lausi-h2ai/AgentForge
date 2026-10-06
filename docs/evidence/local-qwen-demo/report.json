@@ -1,0 +1,123 @@
+{
+  "mode": "live-model",
+  "presentation": "Replay of captured events; not a screen recording",
+  "model": "qwen3.5-9b-q4_k_m",
+  "model_source": "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF",
+  "model_file": "Qwen3.5-9B-Q4_K_M.gguf",
+  "model_bytes": 5680522464,
+  "model_sha256": "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8",
+  "llama_cpp_build": "b11438",
+  "hardware": {
+    "cpu": "AMD Ryzen 7 7800X3D 8-Core Processor           ",
+    "system_ram_gib": 31,
+    "gpu": "NVIDIA GeForce RTX 3070",
+    "gpu_vram_gib": 8.0
+  },
+  "gpu_layers": 28,
+  "inference_slots": 1,
+  "context_tokens": 16384,
+  "started_at_utc": "20261006T121320549219",
+  "git_revision": "8bff44adac9c2b0044502a2883c07ddab3c5f3b6",
+  "working_tree_dirty": true,
+  "case": "slugify",
+  "generation_seconds": 417.602,
+  "planned_tasks": 3,
+  "completed_tasks": 3,
+  "retries": 1,
+  "acceptance_passed": true,
+  "checkpoint_restored": true,
+  "generated_tests_passed": true,
+  "generated_tests_summary": "10 passed in 0.02s",
+  "passed": true,
+  "recorded_tool_calls": {},
+  "developer_tool_results_in_runtime": {
+    "write_file": 22,
+    "list_files": 4,
+    "delete_file": 13,
+    "read_file": 3
+  },
+  "planner_source": "sadt",
+  "validation_repair": null,
+  "unexpected_generated_files": [
+    "run_tests.py"
+  ],
+  "events": [
+    {
+      "timestamp": "2026-10-06T12:13:25.495921Z",
+      "event": "Requirements Analysis"
+    },
+    {
+      "timestamp": "2026-10-06T12:13:39.250444Z",
+      "event": "Architecture Design"
+    },
+    {
+      "timestamp": "2026-10-06T12:13:45.770724Z",
+      "event": "Task Planning"
+    },
+    {
+      "timestamp": "2026-10-06T12:14:10.764327Z",
+      "event": "Development"
+    },
+    {
+      "timestamp": "2026-10-06T12:15:44.622702Z",
+      "event": "Task 1 retry: exception"
+    },
+    {
+      "timestamp": "2026-10-06T12:17:33.020129Z",
+      "event": "Checkpoint 1: completed"
+    },
+    {
+      "timestamp": "2026-10-06T12:18:16.393423Z",
+      "event": "Checkpoint 2: completed"
+    },
+    {
+      "timestamp": "2026-10-06T12:19:55.292716Z",
+      "event": "Checkpoint 3: completed"
+    },
+    {
+      "timestamp": "2026-10-06T12:19:55.383847Z",
+      "event": "Finalization"
+    }
+  ],
+  "tasks": [
+    {
+      "index": 0,
+      "status": "completed",
+      "retries": 1
+    },
+    {
+      "index": 1,
+      "status": "completed",
+      "retries": 0
+    },
+    {
+      "index": 2,
+      "status": "completed",
+      "retries": 0
+    }
+  ],
+  "scope": "One local coding case with real requirements, architecture, planning, developer, reviewer and documentation agents",
+  "limitations": "One run is not a benchmark. Optional Docker testing, embeddings and persistent memory were disabled.",
+  "generated_artifacts": [
+    {
+      "file": "generated/README.md",
+      "snapshot": "generated/README.md.txt",
+      "sha256": "24282f645cc213ae47d3b2680510177f04d00b0f8fe1067c64cc32e15e5fa772"
+    },
+    {
+      "file": "generated/run_tests.py",
+      "snapshot": "generated/run_tests.py.txt",
+      "sha256": "36b303812ac41f196b40902e310dbebd6d5d33c95192d884a04054e9eb0ce847"
+    },
+    {
+      "file": "generated/slugify.py",
+      "snapshot": "generated/slugify.py.txt",
+      "sha256": "f37900142e34dab19e3dbd31f076dd37b949c5c568caf0cc4c42c8554fa0051e"
+    },
+    {
+      "file": "generated/test_slugify.py",
+      "snapshot": "generated/test_slugify.py.txt",
+      "sha256": "c096b9d52330aac87936ff9c5b1080ab1780d18574f2b8e1ee688e7702f593ec"
+    }
+  ]
+}

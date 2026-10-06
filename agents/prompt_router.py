@@ -16,6 +16,10 @@ TASK_TYPES = (
 
 def detect_task_type(task_text: str, default: str = "modify_file") -> str:
     text = (task_text or "").lower()
+    # Global requirements in an enriched prompt must not choose the task overlay.
+    current_task = re.split(r"\bcurrent task[^\n]*:\n", text, maxsplit=1)
+    if len(current_task) == 2:
+        text = current_task[1]
 
     if _matches(text, r"\b(review|code review|submit_review|find issues?)\b"):
         return "review"

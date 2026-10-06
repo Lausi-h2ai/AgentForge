@@ -1,0 +1,5 @@
+import unittest
+from test_slugify import TestSlugify
+
+if __name__ == "__main__":
+    unittest.main()

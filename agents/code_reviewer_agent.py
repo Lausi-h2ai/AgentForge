@@ -76,6 +76,7 @@ class CodeReviewerAgent(BaseAgent):
             FunctionTool.from_defaults(
                 fn=self._wrap_tool(orchestrator_tools.submit_review, "submit_review"),
                 name="submit_review",
+                return_direct=True,
                 description="**MANDATORY** - Submit your review. This is the ONLY way to complete a review."
             )
         ]

@@ -43,6 +43,14 @@ async def execute_development_stage(ctx: StageContext) -> DevelopmentStageResult
     dev_memory = orch._get_memory_context(task, agent_name="DeveloperAgent")
     dev_tool_memory = orch._get_memory_context("tool usage rules", agent_name="DeveloperAgent")
     enhanced_task = f"{task}\n\n{rag_context}{retry_context}{dev_memory}{dev_tool_memory}"
+    requirements = getattr(orch, "user_prompt", "")
+    if requirements:
+        enhanced_task = (
+            "PROJECT REQUIREMENTS (these constraints take precedence over conflicting plan details):\n"
+            + requirements
+            + "\n\nCURRENT TASK (implement only this task now; other files belong to later tasks):\n"
+            + enhanced_task
+        )
 
     orchestrator_conv = orch.dev_agent._get_or_create_conversation("orchestrator")
     orchestrator_conv.add_message(

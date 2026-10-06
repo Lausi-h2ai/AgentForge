@@ -1,0 +1,52 @@
+import unittest
+from slugify import slugify
+
+
+class TestSlugify(unittest.TestCase):
+    """Test cases for slugify function."""
+    
+    def test_basic_conversion(self):
+        """Test basic string conversion."""
+        self.assertEqual(slugify("  Hello, WORLD!  "), "hello-world")
+    
+    def test_multiple_separators(self):
+        """Test multiple consecutive separators."""
+        self.assertEqual(slugify("a---b___c"), "a-b-c")
+    
+    def test_special_characters(self):
+        """Test special characters."""
+        self.assertEqual(slugify("A/B"), "a-b")
+    
+    def test_all_punctuation(self):
+        """Test all punctuation input."""
+        self.assertEqual(slugify("!!!"), "")
+    
+    def test_empty_string(self):
+        """Test empty string input."""
+        self.assertEqual(slugify(""), "")
+    
+    def test_unicode_not_transliterated(self):
+        """Test that Unicode is not transliterated."""
+        self.assertEqual(slugify("h\u00e9llo w\u00f6rld"), "h-llo-w-rld")
+    
+    def test_single_unicode_char(self):
+        """Test single Unicode character."""
+        self.assertEqual(slugify("\u00e9"), "")
+    
+    def test_digits_retained(self):
+        """Test that digits are retained."""
+        self.assertEqual(slugify("test123"), "test123")
+    
+    def test_mixed_case(self):
+        """Test mixed case input."""
+        self.assertEqual(slugify("HeLLo WoRLd"), "hello-world")
+    
+    def test_leading_trailing_hyphens_stripped(self):
+        """Test that leading and trailing hyphens are stripped."""
+        self.assertEqual(slugify("---hello---"), "hello")
+        self.assertEqual(slugify("hello---"), "hello")
+        self.assertEqual(slugify("---hello"), "hello")
+
+
+if __name__ == "__main__":
+    unittest.main()

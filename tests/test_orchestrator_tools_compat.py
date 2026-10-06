@@ -66,3 +66,18 @@ def test_recall_memory_reports_unavailable_when_memory_disabled():
     assert result["success"] is False
     assert "unavailable" in result["error"].lower()
 
+
+def test_file_tools_preserve_unicode_and_source_escape_sequences(tmp_path):
+    tools = OrchestratorTools(_DummyOrchestrator(tmp_path))
+    content = 'value = "caf\u00e9\\nworld"\npattern = r"\\d+\\t"\n'
+    assert tools.write_file("escapes.py", content)["success"]
+    assert (tmp_path / "escapes.py").read_text(encoding="utf-8") == content
+    compile(content, "escapes.py", "exec")
+    replacement = 'value = "na\u00efve\\nworld"'
+    assert tools.replace_text("escapes.py", content.splitlines()[0], replacement)["success"]
+    inserted = '\nother = "\u00e9\\n\\t"\n'
+    assert tools.insert_text("escapes.py", inserted)["success"]
+    result = (tmp_path / "escapes.py").read_text(encoding="utf-8")
+    assert result == content.replace(content.splitlines()[0], replacement) + inserted
+    compile(result, "escapes.py", "exec")
+

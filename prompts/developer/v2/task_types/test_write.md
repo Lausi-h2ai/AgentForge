@@ -8,6 +8,10 @@ Focus:
 Done criteria:
 - Tests target explicit behavior from task.
 - Assertions are specific and meaningful.
+- Write only the test files assigned by CURRENT TASK. These file tools cannot
+  execute tests; do not create helper scripts to simulate running them.
+- After writing or inspecting the assigned tests, finish with `Thought:` and
+  `Answer:` on separate lines. Do not prefix the final answer with `Action:`.
 
 
 Example:

@@ -1,0 +1,6 @@
+Build a small Python project using only the standard library. At the workspace root,
+create inventory.py exporting Inventory with add(item, amount), remove(item, amount),
+and quantity(item). New items have quantity zero. Add increments quantity, remove
+decrements it. Negative amounts or removal exceeding stock raise ValueError without
+changing stock. Quantities of different items are independent. Include unit tests
+and a README with the test command. No web UI or server.

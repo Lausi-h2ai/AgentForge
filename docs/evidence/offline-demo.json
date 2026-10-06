@@ -1,0 +1,25 @@
+{
+  "mode": "offline-scripted",
+  "live_model_calls": 0,
+  "scope": "Real tools, development/review stages, feedback, checkpoint and state restoration",
+  "excluded": [
+    "LLM quality",
+    "planning",
+    "Git rollback",
+    "embedding retrieval",
+    "persistent memory"
+  ],
+  "events": [
+    "Attempt 1: real write_file tool updates greeting.py; checkpoint developed",
+    "Review blocks: whitespace bug; checkpoint pending; feedback retained",
+    "Attempt 2: real replace_text tool updates greeting.py; checkpoint developed",
+    "Retry prompt contains reviewer feedback; corrected implementation passes review",
+    "Acceptance: greet(' Ada ') == 'Hello, Ada!'",
+    "Fresh orchestrator restores completed task and retry history from disk"
+  ],
+  "attempts": 2,
+  "retries": 1,
+  "status": "completed",
+  "acceptance_passed": true,
+  "restored_retry_count": 1
+}

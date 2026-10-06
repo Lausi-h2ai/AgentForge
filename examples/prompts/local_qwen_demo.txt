@@ -1,0 +1,11 @@
+Build a minimal three-file Python project using only the standard library.
+Create slugify.py exporting slugify(text: str) -> str. Lowercase ASCII letters,
+retain ASCII letters and digits, replace each run of other characters with one
+hyphen, and strip leading/trailing hyphens. Empty or all-punctuation input returns
+an empty string. The standard-library re module is allowed.
+Examples: "  Hello, WORLD!  " -> "hello-world", "a---b___c" -> "a-b-c",
+"A/B" -> "a-b", "!!!" -> "", and "" -> "".
+Unicode is not transliterated: "h\u00e9llo w\u00f6rld" -> "h-llo-w-rld", and "\u00e9" -> "".
+Create test_slugify.py with unittest cases and README.md with the unittest command.
+Keep the plan to these three files, combining file creation with complete contents.
+No packaging, configuration files, web UI, server, or additional features.

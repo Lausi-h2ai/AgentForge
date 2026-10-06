@@ -7,4 +7,4 @@ Review focus:
 
 
 Example:
-Task asks for `api/client.js` -> ensure directory exists, then write full file content in one `write_file` call.
+Task asks for `api/client.js` -> read the file and check that its contents implement the current task completely.

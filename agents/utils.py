@@ -16,10 +16,18 @@ from .llama_compat import (
     GoogleGenAIEmbedding,
     Ollama,
     OllamaEmbedding,
+    OpenAILike,
+    OpenAILikeEmbedding,
     Settings,
     TokenCountingHandler,
 )
 from orchestrator_core.model_config import get_phase_model_overrides, resolve_model_config
+from orchestrator_core.provider_config import (
+    api_base,
+    embedding_provider,
+    openai_llm_args,
+    resolve_provider,
+)
 
 # Google API imports
 try:
@@ -141,30 +149,29 @@ def _repair_json(json_str: str, error_msg: str) -> str:
     return json_str
 
 
-def configure_llm_and_embed(provider="ollama", model=None):
+def configure_llm_and_embed(provider=None, model=None):
     """
     ORIGINAL FUNCTION SIGNATURE MAINTAINED.
     Configures and returns LLM and embedding models based on the provider.
     
     Args:
-        provider: "ollama" or "google"
+        provider: "openai", "ollama", or "google" (defaults to LLM_PROVIDER)
         model: Optional model override
     
     Returns:
         Tuple of (llm_class, llm_args, token_counter)
     """
+    provider = resolve_provider(provider)
     print(f"Configuring models for provider: {provider.upper()}")
 
     if provider == "google":
         if not os.getenv("GOOGLE_API_KEY"):
             raise ValueError("Environment variable GOOGLE_API_KEY is required to use Google GenAI.")
         llm_class = GoogleGenAI
-        embed_model = GoogleGenAIEmbedding(model_name="gemini-embedding-1.0")
         llm_args = {"model_name": model or "models/gemma-3-12b"}
 
     elif provider == "ollama":
         llm_class = Ollama
-        embed_model = OllamaEmbedding(model_name="nomic-embed-text:latest")
         llm_args = {
             "model": model or "qwen3-coder-next:cloud",
             "request_timeout": 3000.0,
@@ -172,10 +179,38 @@ def configure_llm_and_embed(provider="ollama", model=None):
             #"context_window": 32768,
         }
     else:
-        raise ValueError(f"Unsupported LLM provider: {provider}")
+        llm_class = OpenAILike
+        llm_args = openai_llm_args(model)
+
+    selected_embedding_provider = embedding_provider(provider)
+    if selected_embedding_provider == "none":
+        # No implicit OpenAI or Ollama embedding calls; the orchestrator skips vector indexing.
+        embed_model = None
+    elif selected_embedding_provider == "openai":
+        embedding_model = (os.getenv("EMBEDDING_MODEL") or "").strip()
+        if not embedding_model:
+            raise ValueError("EMBEDDING_MODEL is required for OpenAI-compatible embeddings")
+        embed_model = OpenAILikeEmbedding(
+            model_name=embedding_model,
+            api_base=api_base("OPENAI_EMBEDDING_BASE_URL", os.getenv("OPENAI_BASE_URL")),
+            api_key=(
+                os.getenv("OPENAI_EMBEDDING_API_KEY")
+                or os.getenv("OPENAI_API_KEY")
+                or "not-required"
+            ),
+        )
+    elif selected_embedding_provider == "google":
+        embed_model = GoogleGenAIEmbedding(
+            model_name=os.getenv("EMBEDDING_MODEL") or "gemini-embedding-1.0"
+        )
+    else:
+        embed_model = OllamaEmbedding(
+            model_name=os.getenv("EMBEDDING_MODEL") or "nomic-embed-text:latest"
+        )
     
     # Apply configuration globally
-    Settings.embed_model = embed_model
+    if embed_model is not None:
+        Settings.embed_model = embed_model
 
     token_counter = TokenCountingHandler()
     Settings.callback_manager = CallbackManager([token_counter])

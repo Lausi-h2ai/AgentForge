@@ -14,6 +14,23 @@ def _agent():
     return agent
 
 
+def test_action_signature_waits_for_complete_json_with_braces_in_code():
+    import json
+
+    action = 'Action: write_file\nAction Input: ' + json.dumps({
+        'filename': 'greeting.py', 'content': 'return f"Hello, {name}!"\n'
+    })
+    for length in range(len(action)):
+        assert list(DeveloperAgent._completed_action_signatures(action[:length])) == []
+    completed = list(DeveloperAgent._completed_action_signatures(action))
+    assert len(completed) == 1
+    assert list(DeveloperAgent._completed_action_signatures(action + '\nDone')) == completed
+    repeated = list(DeveloperAgent._completed_action_signatures(action + '\n' + action))
+    assert len(repeated) == 2
+    assert repeated[0][0] < repeated[1][0]
+    assert repeated[0][1] == repeated[1][1]
+
+
 def test_no_tool_guard_does_not_trigger_too_early_on_event_count():
     agent = _agent()
     should_abort = agent._should_abort_for_no_tool_calls(

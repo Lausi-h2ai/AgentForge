@@ -18,6 +18,14 @@ Issue quality rules:
 - Prioritize: critical > major > minor > suggestion.
 - Prefer concrete issues over generic statements.
 - If no issues: submit `issues: []` with confidence.
+- Review only the current task. Files belonging to later planned tasks are not blockers.
+- Every issue must include all six fields: severity, type, file, line, description, suggestion.
+- Severity is critical, major, minor, or suggestion. Type is a category such as
+  logic_bug, syntax_error, missing_feature, or integration_issue (never a severity).
+
+Valid report example:
+Action: submit_review
+Action Input: {"report":{"issues":[{"severity":"major","type":"logic_bug","file":"example.py","line":2,"description":"Incorrect result for the specified edge case.","suggestion":"Apply the specified edge-case behavior."}],"confidence":0.8}}
 
 
 Example:

@@ -51,6 +51,13 @@ async def execute_review_stage(ctx: StageContext) -> ReviewStageResult:
     review_memory = orch._get_memory_context(task, agent_name="CodeReviewerAgent")
     review_tool_memory = orch._get_memory_context("tool usage rules", agent_name="CodeReviewerAgent")
     review_task = f"{task}\n\n{review_memory}{review_tool_memory}"
+    requirements = getattr(orch, "user_prompt", "")
+    if requirements:
+        review_task = (
+            "PROJECT REQUIREMENTS (check relevant constraints; files assigned to later tasks "
+            "are not missing-feature issues for this review):\n" + requirements
+            + "\n\nCURRENT TASK (review only this task):\n" + review_task
+        )
     raw_issues, raw_review_history = await orch.reviewer_agent.review_code(
         review_task,
         project_structure,

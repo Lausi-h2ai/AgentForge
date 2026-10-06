@@ -68,7 +68,11 @@ class SADTSARTPlannerAgent(BaseAgent):
 
         # Count indicators
         simple_count = sum(1 for indicator in simple_indicators if indicator in context_lower)
-        complex_count = sum(1 for indicator in complex_indicators if indicator in context_lower)
+        complex_count = sum(
+            1 for indicator in complex_indicators
+            if (re.search(rf"\b{indicator}\b", context_lower)
+                if indicator in {"orm", "react"} else indicator in context_lower)
+        )
 
         # Decision logic
         if simple_count > 0 and complex_count == 0:
@@ -117,9 +121,17 @@ class SADTSARTPlannerAgent(BaseAgent):
 
             # Check each pattern
             for pattern, reason in impossible_patterns:
-                if re.search(pattern, combined):
-                    match = re.search(pattern, combined).group()
-                    errors.append(f"Task {task_id}: Contains '{match}' - {reason}")
+                for match in re.finditer(pattern, combined):
+                    # Writing usage instructions does not execute their commands.
+                    prefix = combined[max(0, match.start() - 120):match.start()]
+                    documenting = re.search(r"\b(readme|documentation|usage guide)\b", title)
+                    instruction = re.search(
+                        r"(?:how to|instructions? (?:on |for )?(?:how to |to )?|commands? to|"
+                        r"steps to)\s*$", prefix
+                    )
+                    if documenting and instruction:
+                        continue
+                    errors.append(f"Task {task_id}: Contains '{match.group()}' - {reason}")
                     return True
 
             # Check subtasks recursively
@@ -1012,7 +1024,6 @@ NO execution commands. Output ONLY valid JSON array."""
         patterns = [
             r'\bplaceholder\b',
             r'\bempty file\b',
-            r'\bempty\b',
             r'\bstub\b',
             r'\btemplate\b',
             r'\btodo\b',

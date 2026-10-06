@@ -20,6 +20,30 @@ def _make_reviewer_stub():
     return agent
 
 
+def test_submit_review_is_a_terminal_tool(monkeypatch):
+    from types import SimpleNamespace
+    from agents import code_reviewer_agent as module
+
+    tool_specs = []
+
+    class FakeTool:
+        @staticmethod
+        def from_defaults(**kwargs):
+            tool_specs.append(kwargs)
+            return kwargs
+
+    monkeypatch.setattr(module.BaseAgent, "__init__",
+                        lambda self, *_args, **_kwargs: setattr(self, "llm", object()))
+    monkeypatch.setattr(module, "FunctionTool", FakeTool)
+    monkeypatch.setattr(module, "ReActAgent", lambda **kwargs: SimpleNamespace(**kwargs))
+    tools = SimpleNamespace(**{name: (lambda *args, **kwargs: {}) for name in (
+        "read_file", "list_files", "get_code_summary", "directory_exists",
+        "recall_memory", "submit_review",
+    )})
+    module.CodeReviewerAgent(None, {}, tools, None)
+    assert next(spec for spec in tool_specs if spec["name"] == "submit_review")["return_direct"]
+
+
 def test_reviewer_normalizes_read_file_args_wrapper():
     agent = _make_reviewer_stub()
 

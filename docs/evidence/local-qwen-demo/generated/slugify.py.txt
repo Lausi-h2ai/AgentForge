@@ -1,0 +1,52 @@
+import re
+
+
+def slugify(text: str) -> str:
+    """
+    Convert a string to a URL-friendly slug.
+    
+    - Lowercases ASCII letters
+    - Retains ASCII letters and digits
+    - Replaces each run of non-alphanumeric characters with one hyphen
+    - Strips leading/trailing hyphens
+    - Returns empty string for empty or all-punctuation input
+    - Does NOT transliterate Unicode characters
+    
+    Args:
+        text: Input string to convert
+        
+    Returns:
+        URL-friendly slug string
+    """
+    if not text:
+        return ""
+    
+    # Lowercase the entire string
+    text = text.lower()
+    
+    # Replace any non-alphanumeric character with a hyphen
+    # This handles Unicode by keeping only ASCII alphanumerics
+    slug = re.sub(r'[^a-z0-9]+', '-', text)
+    
+    # Strip leading and trailing hyphens
+    slug = slug.strip('-')
+    
+    return slug
+
+
+if __name__ == "__main__":
+    # Simple test
+    test_cases = [
+        ("  Hello, WORLD!  ", "hello-world"),
+        ("a---b___c", "a-b-c"),
+        ("A/B", "a-b"),
+        ("!!!", ""),
+        ("", ""),
+        ("h\u00e9llo w\u00f6rld", "h-llo-w-rld"),
+        ("\u00e9", ""),
+    ]
+    
+    for text, expected in test_cases:
+        result = slugify(text)
+        status = "PASS" if result == expected else "FAIL"
+        print(f"{status}: slugify({repr(text)}) = {repr(result)} (expected {repr(expected)})")

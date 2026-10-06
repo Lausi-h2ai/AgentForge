@@ -23,6 +23,25 @@ def _mk_planner():
     return planner
 
 
+def test_empty_input_requirement_is_not_a_placeholder_task():
+    planner = _mk_planner()
+    plan = {
+        "tasks": [{
+            "title": "Implement slugify.py",
+            "description": "Return an empty string for empty or all-punctuation input.",
+        }],
+    }
+    assert not planner._contains_placeholder_tasks(plan)
+    plan["tasks"][0]["description"] = "Create an empty file for the implementation."
+    assert planner._contains_placeholder_tasks(plan)
+
+
+def test_minimal_string_transform_is_not_mistaken_for_orm():
+    planner = _mk_planner()
+    assert planner._detect_project_complexity("minimal string transformation") == "simple"
+    assert planner._detect_project_complexity("minimal React UI with an ORM") == "complex"
+
+
 def test_generate_workplan_uses_correction_pass_before_full_regen():
     planner = _mk_planner()
     logger = _DummyLogger()
@@ -124,3 +143,19 @@ Technical Architecture:
     missing = planner._check_required_topics(plan, project_context)
 
     assert "Pantry CRUD" not in missing
+
+
+def test_documenting_test_commands_does_not_execute_them():
+    planner = _mk_planner()
+    task = {"id": "T1", "title": "Create README documentation",
+            "description": "Write instructions on how to run the test suite."}
+    assert planner._contains_impossible_tasks({"tasks": [task]}) == (False, [])
+    task["description"] += " Run pytest to verify it."
+    assert planner._contains_impossible_tasks({"tasks": [task]})[0]
+
+
+def test_execution_task_is_rejected_even_when_it_mentions_instructions():
+    planner = _mk_planner()
+    task = {"id": "T1", "title": "Validate application",
+            "description": "Follow instructions on how to run pytest."}
+    assert planner._contains_impossible_tasks({"tasks": [task]})[0]

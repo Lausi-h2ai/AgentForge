@@ -35,6 +35,7 @@ except ImportError:  # pragma: no cover - exercised only in minimal installs
 
 from orchestrator_core.contracts.execution import DeveloperRunResult
 from orchestrator_core.blackboard import BlackboardState
+from orchestrator_core.provider_config import embedding_provider, resolve_provider
 from orchestrator_core.pipeline import (
     StageContext,
     TaskEscalationPolicy,
@@ -344,7 +345,7 @@ class Orchestrator:
         self,
         project_name,
         initial_prompt_file=None,
-        provider="ollama",
+        provider=None,
         force_new=False,
         run_tests=False,
         planning_model: Optional[str] = None,
@@ -356,15 +357,16 @@ class Orchestrator:
         Args:
             project_name: Name of the project
             initial_prompt_file: Path to initial prompt file
-            provider: LLM provider ("ollama" or "google")
+            provider: LLM provider ("openai", "ollama", or "google")
             force_new: Force new project (ignore existing state)
             run_tests: Enable testing phase
         """
         
         # --- 1. CORE SETUP ---
         self.logger = StructuredLogger()
-        self.provider = provider
-        env_planning_model, env_execution_model, env_escalation_models = resolve_model_config(provider)
+        self.provider = resolve_provider(provider)
+        self.embeddings_enabled = embedding_provider(self.provider) != "none"
+        env_planning_model, env_execution_model, env_escalation_models = resolve_model_config(self.provider)
         self.planning_model = planning_model or env_planning_model
         self.execution_model = execution_model or env_execution_model or self.planning_model
 
@@ -453,7 +455,7 @@ class Orchestrator:
 
         # Initialize memory manager (local-only defaults)
         self.memory = MemoryManager(
-            enabled=os.getenv("HIPPOCAMP_AI_ENABLED", "true").lower() == "true",
+            enabled=os.getenv("HIPPOCAMP_AI_ENABLED", "false").lower() == "true",
             qdrant_url=os.getenv("QDRANT_URL", "http://localhost:6333"),
             llm_provider=os.getenv("HIPPOCAMP_AI_LLM_PROVIDER", "ollama"),
             llm_model=os.getenv("HIPPOCAMP_AI_LLM_MODEL"),
@@ -487,7 +489,7 @@ class Orchestrator:
         
         
         print(f"\n??? Orchestrator initialized for project: {project_name}")
-        print(f"   Provider: {provider}")
+        print(f"   Provider: {self.provider}")
         if self.planning_model:
             print(f"   Planning Model: {self.planning_model}")
         print(f"   Model: {self.model_name}")
@@ -1380,6 +1382,10 @@ class Orchestrator:
     
     def _build_index_from_disk(self):
         """Build RAG index from existing files"""
+        if not getattr(self, "embeddings_enabled", True):
+            self.code_index = None
+            self._get_available_files()
+            return
         if not os.path.exists(self.project_dir):
             return
         
@@ -1409,6 +1415,9 @@ class Orchestrator:
     
     def _update_index_incrementally(self, changed_files: Optional[List[str]] = None):
         """Update RAG index with current files"""
+        if not getattr(self, "embeddings_enabled", True):
+            self.code_index = None
+            return
         if not changed_files:
             return
 
@@ -1433,6 +1442,11 @@ class Orchestrator:
     
     def _get_rag_context(self, query: str) -> str:
         """Retrieve relevant code context using RAG"""
+        if not getattr(self, "embeddings_enabled", True):
+            return (
+                "Vector retrieval is disabled. Use list_files, read_file, "
+                "and get_code_summary for code context."
+            )
         if self.code_index:
             retriever = self.code_index.as_retriever(similarity_top_k=3)
             relevant_nodes = retriever.retrieve(query)
@@ -1906,110 +1920,33 @@ class Orchestrator:
 
 # ==================== ENTRY POINT ====================
 
-if __name__ == "__main__":
-    import sys
-    
-    try:
-        project_name = sys.argv[1]
-    except IndexError:
-        print("Error: Missing project name.")
-        print("Usage: python orchestrator.py <project_name> [--prompt <file>] [--new] [--google] [--with-tests] [--planning-model <name>] [--execution-model <name>]")
-        sys.exit(1)
-    
-    initial_prompt_file = None
-    if "--prompt" in sys.argv:
-        try:
-            initial_prompt_file = sys.argv[sys.argv.index("--prompt") + 1]
-        except IndexError:
-            print("Error: --prompt flag requires a filename.")
-            sys.exit(1)
-    
-    provider = "ollama"  # default
-    if "--google" in sys.argv:
-        provider = "google"
-    
-    force_new = "--new" in sys.argv
-    run_tests = "--with-tests" in sys.argv
-    
-    planning_model = None
-    execution_model = None
-    if "--planning-model" in sys.argv:
-        try:
-            planning_model = sys.argv[sys.argv.index("--planning-model") + 1]
-        except IndexError:
-            print("Error: --planning-model flag requires a model name.")
-            sys.exit(1)
-    if "--execution-model" in sys.argv:
-        try:
-            execution_model = sys.argv[sys.argv.index("--execution-model") + 1]
-        except IndexError:
-            print("Error: --execution-model flag requires a model name.")
-            sys.exit(1)
-
-    orchestrator = Orchestrator(
-        project_name,
-        initial_prompt_file,
-        provider=provider,
-        force_new=force_new,
-        run_tests=run_tests,
-        planning_model=planning_model,
-        execution_model=execution_model
-    )
-    
-    asyncio.run(orchestrator.run())
-
-
-
 def main(argv: Optional[List[str]] = None) -> int:
-    args = list(sys.argv[1:] if argv is None else argv)
+    import argparse
 
-    try:
-        project_name = args[0]
-    except IndexError:
-        print("Error: Missing project name.")
-        print("Usage: python orchestrator.py <project_name> [--prompt <file>] [--new] [--google] [--with-tests] [--planning-model <name>] [--execution-model <name>]")
-        return 1
-
-    initial_prompt_file = None
-    if "--prompt" in args:
-        try:
-            initial_prompt_file = args[args.index("--prompt") + 1]
-        except Exception:
-            print("Error: --prompt flag requires a filename.")
-            return 1
-
-    provider = "ollama"
-    if "--google" in args:
-        provider = "google"
-
-    force_new = "--new" in args
-    run_tests = "--with-tests" in args
-
-    planning_model = None
-    execution_model = None
-    if "--planning-model" in args:
-        try:
-            planning_model = args[args.index("--planning-model") + 1]
-        except Exception:
-            print("Error: --planning-model flag requires a model name.")
-            return 1
-    if "--execution-model" in args:
-        try:
-            execution_model = args[args.index("--execution-model") + 1]
-        except Exception:
-            print("Error: --execution-model flag requires a model name.")
-            return 1
-
+    parser = argparse.ArgumentParser(description="AgentForge multi-agent coding orchestrator")
+    parser.add_argument("project_name")
+    parser.add_argument("--prompt", dest="initial_prompt_file")
+    providers = parser.add_mutually_exclusive_group()
+    providers.add_argument("--provider", choices=("openai", "openai-compatible", "ollama", "google"))
+    providers.add_argument("--google", action="store_true", help="Legacy alias for --provider google")
+    parser.add_argument("--new", action="store_true", dest="force_new")
+    parser.add_argument("--with-tests", action="store_true", dest="run_tests")
+    parser.add_argument("--planning-model")
+    parser.add_argument("--execution-model")
+    args = parser.parse_args(argv)
+    provider = "google" if args.google else resolve_provider(args.provider)
     orchestrator = Orchestrator(
-        project_name,
-        initial_prompt_file,
+        args.project_name,
+        args.initial_prompt_file,
         provider=provider,
-        force_new=force_new,
-        run_tests=run_tests,
-        planning_model=planning_model,
-        execution_model=execution_model
+        force_new=args.force_new,
+        run_tests=args.run_tests,
+        planning_model=args.planning_model,
+        execution_model=args.execution_model,
     )
-
     asyncio.run(orchestrator.run())
     return 0
 
+
+if __name__ == "__main__":
+    raise SystemExit(main())

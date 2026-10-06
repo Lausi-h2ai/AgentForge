@@ -9,6 +9,7 @@ import asyncio
 import traceback
 import time
 import re
+import json
 import os
 from typing import List, Dict, Optional, Tuple
 from collections import defaultdict, deque
@@ -248,6 +249,8 @@ Fix the issues mentioned above."""
         action_signature_streak = 0
         last_action_signature = None
         stream_buffer = ""
+        stream_buffer_offset = 0
+        last_action_end = -1
         no_tool_call_timeout_seconds = int(os.getenv("DEV_NO_TOOL_CALL_TIMEOUT_SECONDS", "45"))
         no_tool_call_max_stream_events = int(os.getenv("DEV_NO_TOOL_CALL_MAX_STREAM_EVENTS", "0"))
         no_tool_call_event_guard_min_elapsed_seconds = int(
@@ -330,6 +333,7 @@ Fix the issues mentioned above."""
                         if delta:
                             stream_buffer += delta
                             if len(stream_buffer) > 12000:
+                                stream_buffer_offset += len(stream_buffer) - 12000
                                 stream_buffer = stream_buffer[-12000:]
 
                         # Heuristic: repeated "Action: ..." text without real tool calls indicates stuck formatting loop.
@@ -345,15 +349,11 @@ Fix the issues mentioned above."""
                                 return False, "Agent stuck repeating Action text without invoking tools", tool_calls
 
                         # Stronger loop detection: repeated Action + Action Input signature in streamed text
-                        action_matches = re.findall(
-                            r"Action:\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*(?:\n|\r\n?)\s*Action Input:\s*(\{[\s\S]*?\})",
-                            stream_buffer,
-                            flags=re.IGNORECASE
-                        )
-                        if action_matches and len(tool_calls) == 0:
-                            action_name, action_payload = action_matches[-1]
-                            payload_norm = re.sub(r"\s+", " ", action_payload).strip().lower()[:500]
-                            signature = f"{action_name.lower()}|{payload_norm}"
+                        for action_end, signature in self._completed_action_signatures(stream_buffer):
+                            absolute_end = stream_buffer_offset + action_end
+                            if tool_calls or absolute_end <= last_action_end:
+                                continue
+                            last_action_end = absolute_end
                             if signature == last_action_signature:
                                 action_signature_streak += 1
                             else:
@@ -406,6 +406,20 @@ Fix the issues mentioned above."""
                 return False, None, tool_calls
 
         return True, final_answer_str, tool_calls
+
+    @staticmethod
+    def _completed_action_signatures(text):
+        """Recognize complete JSON actions once, including braces inside file content."""
+        decoder = json.JSONDecoder()
+        pattern = r"Action:\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\r?\n\s*Action Input:\s*"
+        for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+            try:
+                payload, length = decoder.raw_decode(text[match.end():])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                signature = match[1].lower() + "|" + json.dumps(payload, sort_keys=True)
+                yield match.end() + length, signature
     
     async def chat(self, message: str) -> str:
         """Handle consultation"""

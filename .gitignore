@@ -34,4 +34,8 @@ tests/__pycache__/
 .env
 
 projects/
+artifacts/
 docs/plans/
+
+# Local RPG graph backups
+.rpg/*.backup.json

@@ -1,10 +1,26 @@
-# Quick Reference
+# AgentForge quick reference
+
+## Offline demo
+
+```bash
+python scripts/portfolio_demo.py
+```
+
+See [DEMO.md](DEMO.md) for the scripted recording and live demo instructions.
+
+## Live evaluation
+
+```bash
+python scripts/evaluate_portfolio.py --provider openai --model YOUR_SERVED_MODEL
+```
+
+See [EVALUATION.md](EVALUATION.md) for external checks, metrics, and evidence boundaries.
 
 ## Install
 
 ```bash
 pip install -e .[dev]
-pip install -e .[ollama,memory,tester]
+pip install -e .[openai]
 ```
 
 ## Configure
@@ -17,6 +33,9 @@ Key variables:
 
 - `LLM_PROVIDER`
 - `LLM_MODEL`
+- `OPENAI_BASE_URL`
+- `OPENAI_API_KEY`
+- `EMBEDDING_PROVIDER`
 - `LLM_ESCALATION_MODEL`
 - `REVIEW_TIMEOUT_SIMPLE`
 - `REVIEW_TIMEOUT_MEDIUM`
